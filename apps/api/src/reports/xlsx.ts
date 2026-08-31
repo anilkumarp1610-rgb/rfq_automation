@@ -27,10 +27,16 @@ export async function costSheetXlsx(vm: CostSheetVM): Promise<Buffer> {
   kv('Currency', vm.currency);
   ws.addRow([]);
 
-  title('Material');
-  kv('Grade / shape', `${vm.material.grade ?? '—'} / ${vm.material.shape ?? '—'}`);
-  kv('Input weight (kg)', vm.material.inputWeightKg ?? '—');
-  kv('Rate / kg', vm.material.ratePerKg ?? '—');
+  if (vm.sourcing === 'BOUGHT_OUT') {
+    title('Bought-out component')
+    kv('Supplier', vm.supplier ?? '—')
+    kv('Purchase price / pc', vm.purchasePricePerPc ?? '—')
+  } else {
+    title('Material')
+    kv('Grade / shape', `${vm.material.grade ?? '—'} / ${vm.material.shape ?? '—'}`)
+    kv('Input weight (kg)', vm.material.inputWeightKg ?? '—')
+    kv('Rate / kg', vm.material.ratePerKg ?? '—')
+  }
   ws.addRow([]);
 
   title('Process lines');

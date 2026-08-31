@@ -31,6 +31,8 @@ interface CrudOptions {
   transform?: (body: Record<string, unknown>) => Record<string, unknown>;
   /** string fields that must be coerced to BigInt for Prisma (FK ids) */
   bigIntFields?: string[];
+  /** FK columns the list can be filtered by via `?<field>=<id>` (drill-down scoping) */
+  filterableFields?: string[];
   /**
    * For effective-dated rate masters: on create, close any still-open
    * (`effectiveTo == null`) active row for the same key by stamping its
@@ -65,6 +67,10 @@ export function crudRouter(getDelegate: () => Delegate, opts: CrudOptions): Rout
       if (activeOnly) where.isActive = true;
       if (search && opts.searchFields?.length) {
         where.OR = opts.searchFields.map((f) => ({ [f]: { contains: search } }));
+      }
+      for (const f of opts.filterableFields ?? []) {
+        const v = req.query[f];
+        if (typeof v === 'string' && /^\d+$/.test(v)) where[f] = BigInt(v);
       }
       const rows = await getDelegate().findMany({
         where,

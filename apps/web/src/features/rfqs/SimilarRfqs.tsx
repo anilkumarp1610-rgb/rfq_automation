@@ -70,7 +70,7 @@ export default function SimilarRfqs({
       </CardHeader>
       <CardContent className="space-y-4">
         {/* This estimate's reference row */}
-        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-slate-50 p-3">
+        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-muted/40 p-3">
           {reference ? (
             <>
               <div className="text-sm">
@@ -78,7 +78,7 @@ export default function SimilarRfqs({
                 {money(reference.quotedPricePerPc)}/pc
               </div>
               <div className="grid gap-1.5">
-                <label className="text-xs text-slate-500">Actual cost / pc</label>
+                <label className="text-xs text-muted-foreground">Actual cost / pc</label>
                 <Input
                   className="w-32"
                   type="number"
@@ -109,7 +109,7 @@ export default function SimilarRfqs({
               )}
             </>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-muted-foreground">
               Compute the cost and set this revision to <b>QUOTED</b> (or Won/Lost) to record it in
               the reference history.
             </p>
@@ -118,9 +118,9 @@ export default function SimilarRfqs({
 
         {/* Similar matches */}
         {isLoading ? (
-          <p className="text-sm text-slate-500">Finding comparable RFQs…</p>
+          <p className="text-sm text-muted-foreground">Finding comparable RFQs…</p>
         ) : matches.length === 0 ? (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             No comparable historical RFQs yet — they appear here as more parts are quoted.
           </p>
         ) : (
@@ -149,12 +149,12 @@ export default function SimilarRfqs({
                             style={{ width: `${Math.round((m.score / maxScore) * 100)}%` }}
                           />
                         </div>
-                        <span className="text-xs text-slate-400">{m.score.toFixed(1)}</span>
+                        <span className="text-xs text-muted-foreground">{m.score.toFixed(1)}</span>
                       </div>
                     </TableCell>
                     <TableCell>
                       <span className="font-medium">{m.rfqNumber}</span> R{m.revisionNo}
-                      <div className="text-xs text-slate-400">
+                      <div className="text-xs text-muted-foreground">
                         {m.customerPartNumber} · {m.partName}
                       </div>
                     </TableCell>

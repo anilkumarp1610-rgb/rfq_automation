@@ -10,6 +10,9 @@ export function toPartAttributesData(input: RfqPartAttributesInput): Record<stri
   const out: Record<string, unknown> = {};
   const has = (k: keyof RfqPartAttributesInput) => k in input && input[k] !== undefined;
 
+  if (has('sourcingType')) out.sourcingType = input.sourcingType;
+  if (has('purchasePricePerPc')) out.purchasePricePerPc = input.purchasePricePerPc ?? null;
+  if (has('supplierName')) out.supplierName = input.supplierName ?? null;
   if (has('materialCategoryId')) out.materialCategoryId = bigIntOrNull(input.materialCategoryId);
   if (has('materialShapeId')) out.materialShapeId = bigIntOrNull(input.materialShapeId);
   if (has('productTypeId')) out.productTypeId = bigIntOrNull(input.productTypeId);

@@ -107,9 +107,11 @@ async function seedMasters() {
     data: {
       materialTypeId: null,
       procurementPct: 2,
-      transportationRate: 3.5,
-      transportationUom: 'per_kg',
       storagePct: 1.5,
+      transportationMode: 'PER_KG',
+      transportationRate: 3.5,
+      packingMode: 'FIXED',
+      packingCost: 0,
       effectiveFrom: today,
     },
   });
@@ -247,7 +249,7 @@ async function seedWorkedExamples() {
     if (s.pn === 'P01273549') {
       const rfq = await prisma.rfq.create({
         data: {
-          rfqNumber: 'RFQ-2026-0001',
+          rfqNumber: '2026/03/0001',
           customerPartId: part.id,
           annualQty: 5000,
           batchQty: 500,
@@ -273,7 +275,7 @@ async function seedWorkedExamples() {
     }
   }
 
-  console.log('✓ Worked examples: P01273549 & P01273550 customer parts + spec analyses, RFQ-2026-0001');
+  console.log('✓ Worked examples: P01273549 & P01273550 customer parts + spec analyses, 2026/03/0001');
 }
 
 async function main() {

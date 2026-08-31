@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { RfqStatus, RfqVersionStatus, CostingMethod } from './enums';
+import { RfqStatus, RfqVersionStatus, CostingMethod, SourcingType } from './enums';
+import { specExtractResult } from './spec';
 
 const optionalStr = z
   .string()
@@ -26,6 +27,10 @@ export type CustomerPartInput = z.infer<typeof customerPartSchema>;
 // RFQ part attributes (per version)
 // ---------------------------------------------------------------------------
 export const rfqPartAttributesSchema = z.object({
+  /** MANUFACTURED → costed by the engine · BOUGHT_OUT → procured, costed from purchase price */
+  sourcingType: SourcingType.optional(),
+  purchasePricePerPc: z.coerce.number().nonnegative().nullish(),
+  supplierName: optionalStr,
   materialCategoryId: idString.nullish(),
   materialShapeId: idString.nullish(),
   productTypeId: idString.nullish(),
@@ -45,7 +50,8 @@ export type RfqPartAttributesInput = z.infer<typeof rfqPartAttributesSchema>;
 // RFQ (header) + first version
 // ---------------------------------------------------------------------------
 export const rfqCreateSchema = z.object({
-  rfqNumber: z.string().trim().min(1, 'RFQ number is required').max(60),
+  /** omit to auto-generate `YYYY/MM/NNNN` */
+  rfqNumber: z.string().trim().max(60).optional(),
   customerPartId: idString,
   rfqDate: z.coerce.date().default(() => new Date()),
   requiredDate: z.coerce.date().nullish(),
@@ -136,6 +142,39 @@ export const similarQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(10),
 });
 export type SimilarQueryInput = z.infer<typeof similarQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// Create RFQ from a spec drawing (wizard)
+// ---------------------------------------------------------------------------
+export const rfqFromSpecSchema = z.object({
+  /** the extraction returned by the preview step — reused so the AI is not called twice */
+  extract: specExtractResult,
+  /** whether that extraction was the deterministic mock (no API key) */
+  mock: z.coerce.boolean().default(false),
+  partNumber: z.string().trim().min(1, 'Part number is required').max(120),
+  partName: z.string().trim().min(1, 'Part name is required').max(200),
+  revision: z.string().trim().max(20).default('R00'),
+  sourcingType: SourcingType.default('MANUFACTURED'),
+  purchasePricePerPc: z.coerce.number().nonnegative().nullish(),
+  supplierName: optionalStr,
+  customerId: idString.optional(),
+  /** used when customerId is absent — a customer is created with rating 3 */
+  newCustomerName: z.string().trim().max(200).optional(),
+  productTypeId: idString.nullish(),
+  materialCategoryId: idString.nullish(),
+  materialShapeId: idString.nullish(),
+  forgingLossPct: z.coerce.number().min(0).max(100).default(12),
+  annualQty: z.coerce.number().nonnegative().nullish(),
+  batchQty: z.coerce.number().nonnegative().nullish(),
+  requiredDate: z.coerce.date().nullish(),
+  currency: z.string().trim().length(3).default('INR'),
+  versionLabel: optionalStr,
+  /** must be true to add a revision when the part already has an RFQ */
+  confirmRevision: z.coerce.boolean().default(false),
+  /** auto-suggest process + material lines from the spec */
+  autoLines: z.coerce.boolean().default(true),
+});
+export type RfqFromSpecInput = z.infer<typeof rfqFromSpecSchema>;
 
 export const computeRequestSchema = z.object({
   asOfDate: z.coerce.date().optional(),

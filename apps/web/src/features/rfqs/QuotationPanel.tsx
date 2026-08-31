@@ -63,7 +63,7 @@ export default function QuotationPanel({
             <FileDown className="h-4 w-4 mr-1" /> Quotation (PDF)
           </Button>
         </div>
-        {hasCost && <p className="text-xs text-slate-400">Quote no. {quoteNo}</p>}
+        {hasCost && <p className="text-xs text-muted-foreground">Quote no. {quoteNo}</p>}
       </CardContent>
     </Card>
   )

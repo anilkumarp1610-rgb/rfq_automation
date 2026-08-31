@@ -44,7 +44,7 @@ export default function AuditLogPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold">Audit Log</h1>
-        <p className="text-sm text-slate-500 mt-1">
+        <p className="text-sm text-muted-foreground mt-1">
           Every master change and every quote (AI-recommended vs final) is recorded.
         </p>
       </div>
@@ -56,7 +56,7 @@ export default function AuditLogPage() {
         onChange={(e) => setEntityType(e.target.value)}
       />
 
-      <div className="rounded-lg border bg-white">
+      <div className="rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -74,14 +74,14 @@ export default function AuditLogPage() {
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-slate-500">
+                <TableCell colSpan={5} className="text-muted-foreground">
                   No audit entries.
                 </TableCell>
               </TableRow>
             ) : (
               rows.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell className="whitespace-nowrap text-xs text-slate-500">
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                     {new Date(r.createdAt).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-sm">{r.by?.name ?? '—'}</TableCell>
@@ -89,10 +89,10 @@ export default function AuditLogPage() {
                     <Badge variant={actionVariant[r.action] ?? 'secondary'}>{r.action}</Badge>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {r.entityType} <span className="text-slate-400">#{r.entityId}</span>
+                    {r.entityType} <span className="text-muted-foreground">#{r.entityId}</span>
                   </TableCell>
                   <TableCell>
-                    <code className="text-xs text-slate-600 break-all">
+                    <code className="text-xs text-muted-foreground break-all">
                       {typeof r.changes === 'string' ? r.changes : JSON.stringify(r.changes)}
                     </code>
                   </TableCell>

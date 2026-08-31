@@ -3,7 +3,8 @@ import {
   CostingMethod,
   ProcessType,
   QcMethod,
-  TransportationUom,
+  TransportationMode,
+  CostMode,
 } from './enums';
 import { money, pct } from './common';
 
@@ -92,10 +93,14 @@ export type MaterialPriceInput = z.infer<typeof materialPriceSchema>;
 
 export const handlingConfigSchema = z.object({
   materialTypeId: z.string().regex(/^\d+$/).nullish(),
-  procurementPct: pct,
-  transportationRate: money,
-  transportationUom: TransportationUom.default('per_lot'),
-  storagePct: pct,
+  procurementPct: pct.default(0),
+  storagePct: pct.default(0),
+  /** transportation — PER_KG · PER_LOT · FIXED (₹/pc) · PCT (% of base cost); default value 0 */
+  transportationMode: TransportationMode.default('FIXED'),
+  transportationRate: money.default(0),
+  /** packing — FIXED (₹/pc) or PCT (% of base cost); default 0 */
+  packingMode: CostMode.default('FIXED'),
+  packingCost: money.default(0),
   effectiveFrom: z.coerce.date(),
   effectiveTo: z.coerce.date().nullish(),
 }).refine(validEffectiveRange, effectiveRangeMsg);

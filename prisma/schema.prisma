@@ -155,10 +155,14 @@ model MaterialPrice {
 model HandlingConfig {
   id                    BigInt   @id @default(autoincrement())
   materialTypeId        BigInt?  @map("material_type_id") // NULL = global config
-  procurementPct        Decimal  @map("procurement_pct")
-  transportationRate    Decimal  @map("transportation_rate")
-  transportationUom     String   @map("transportation_uom") // "per_kg" or "per_lot"
-  storagePct            Decimal  @map("storage_pct")
+  procurementPct        Decimal  @default(0) @map("procurement_pct")
+  storagePct            Decimal  @default(0) @map("storage_pct")
+  // transportation: PER_KG | PER_LOT | FIXED (₹/pc) | PCT (% of base cost)
+  transportationMode    String   @default("FIXED") @map("transportation_uom")
+  transportationRate    Decimal  @default(0) @map("transportation_rate")
+  // packing: FIXED (₹/pc) | PCT (% of base cost)
+  packingMode           String   @default("FIXED") @map("packing_mode")
+  packingCost           Decimal  @default(0) @map("packing_cost")
   effectiveFrom         DateTime @map("effective_from")
   effectiveTo           DateTime? @map("effective_to")
   isActive              Boolean  @default(true) @map("is_active")
@@ -338,6 +342,11 @@ model RfqVersion {
 model RfqPartAttributes {
   id                    BigInt   @id @default(autoincrement())
   rfqVersionId          BigInt   @unique @map("rfq_version_id")
+  // MANUFACTURED (default) — costed by the deterministic engine;
+  // BOUGHT_OUT — a procured / assembly item, costed from its purchase price.
+  sourcingType          String   @default("MANUFACTURED") @map("sourcing_type")
+  purchasePricePerPc    Decimal? @map("purchase_price_per_pc")
+  supplierName          String?  @map("supplier_name")
   materialCategoryId    BigInt?  @map("material_category_id")
   materialShapeId       BigInt?  @map("material_shape_id")
   netWeightKg           Decimal? @map("net_weight_kg")

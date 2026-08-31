@@ -55,6 +55,7 @@ router.use(
     softDelete: true,
     activeFilter: true,
     bigIntFields: ['materialTypeId'],
+    filterableFields: ['materialTypeId'],
     label: 'Material category',
   })
 );
@@ -83,6 +84,7 @@ router.use(
     softDelete: true,
     activeFilter: true,
     bigIntFields: ['materialCategoryId', 'materialShapeId'],
+    filterableFields: ['materialCategoryId', 'materialShapeId'],
     label: 'Material size config',
   })
 );
@@ -101,6 +103,7 @@ router.use(
     softDelete: true,
     activeFilter: true,
     bigIntFields: ['materialSizeConfigId'],
+    filterableFields: ['materialSizeConfigId'],
     closePriorOn: ['materialSizeConfigId'],
     label: 'Material price',
   })
@@ -116,6 +119,7 @@ router.use(
     softDelete: true,
     activeFilter: true,
     bigIntFields: ['materialTypeId'],
+    filterableFields: ['materialTypeId'],
     closePriorOn: ['materialTypeId'],
     label: 'Handling config',
   })

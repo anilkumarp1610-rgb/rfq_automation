@@ -110,11 +110,11 @@ describe('computeCost — material & handling', () => {
     const r = computeCost(
       baseInput({
         material: { netWeightKg: 1, forgingLossPct: 20, ratePerKg: 100 }, // iw 1.2, matCost 120
-        handling: { procurementPct: 10, transportationRate: 10, transportationUom: 'per_kg', storagePct: 5 },
+        handling: { procurementPct: 10, transportationRate: 10, transportationMode: 'PER_KG', storagePct: 5, packingMode: 'FIXED', packingCost: 0 },
       })
     );
     // procurement 12, transport 10*1.2=12, storage 6
-    expect(r.handling).toEqual({ procurement: 12, transportation: 12, storage: 6 });
+    expect(r.handling).toEqual({ procurement: 12, transportation: 12, storage: 6, packing: 0 });
     expect(r.handlingCost).toBe(30);
   });
 
@@ -123,12 +123,91 @@ describe('computeCost — material & handling', () => {
       baseInput({
         batchQty: 200,
         material: { netWeightKg: 1, forgingLossPct: 0, ratePerKg: 100 },
-        handling: { procurementPct: 0, transportationRate: 4000, transportationUom: 'per_lot', storagePct: 0 },
+        handling: { procurementPct: 0, transportationRate: 4000, transportationMode: 'PER_LOT', storagePct: 0, packingMode: 'FIXED', packingCost: 0 },
       })
     );
     expect(r.handling.transportation).toBe(20);
   });
+
+  it('transportation FIXED and packing FIXED are flat ₹/pc; both default to 0', () => {
+    const base = { netWeightKg: 1, forgingLossPct: 0, ratePerKg: 100 };
+    const zero = computeCost(
+      baseInput({
+        material: base,
+        handling: { procurementPct: 0, storagePct: 0, transportationMode: 'FIXED', transportationRate: 0, packingMode: 'FIXED', packingCost: 0 },
+      })
+    );
+    expect(zero.handlingCost).toBe(0);
+
+    const flat = computeCost(
+      baseInput({
+        material: base,
+        handling: { procurementPct: 0, storagePct: 0, transportationMode: 'FIXED', transportationRate: 3.5, packingMode: 'FIXED', packingCost: 2 },
+      })
+    );
+    expect(flat.handling).toEqual({ procurement: 0, transportation: 3.5, storage: 0, packing: 2 });
+    expect(flat.handlingCost).toBe(5.5);
+  });
+
+  it('transportation PCT and packing PCT are a % of the material / purchase base', () => {
+    const r = computeCost(
+      baseInput({
+        material: { netWeightKg: 1, forgingLossPct: 0, ratePerKg: 100 }, // matCost 100
+        handling: { procurementPct: 0, storagePct: 0, transportationMode: 'PCT', transportationRate: 4, packingMode: 'PCT', packingCost: 1.5 },
+      })
+    );
+    expect(r.handling.transportation).toBe(4); // 4% of 100
+    expect(r.handling.packing).toBe(1.5); // 1.5% of 100
+  });
 });
+
+describe('computeCost — bought-out / procured part', () => {
+  it('purchase price replaces the material build-up; handling/QC/admin/margin still apply', () => {
+    const r = computeCost(
+      baseInput({
+        boughtOut: { purchasePricePerPc: 100 },
+        // material is ignored when boughtOut is set
+        material: { netWeightKg: 5, forgingLossPct: 50, ratePerKg: 999 },
+        handling: { procurementPct: 10, transportationRate: 0, transportationMode: 'PER_LOT', storagePct: 5, packingMode: 'FIXED', packingCost: 0 },
+        qc: { method: 'PCT_OF_MFG', qcPct: 4 },
+        adminPct: 10,
+        baseMarginPct: 20,
+      })
+    )
+    expect(r.inputWeightKg).toBe(0)
+    expect(r.materialCost).toBe(100)
+    // handling on the purchase price: 10% + 5% = 15
+    expect(r.handlingCost).toBe(15)
+    expect(r.machiningCost).toBe(0)
+    // preQc 115, qc 4% = 4.6 -> mfg 119.6, admin 10% = 11.96, subtotal 131.56, +20% margin
+    expect(r.qcCost).toBe(4.6)
+    expect(r.subtotal).toBe(131.56)
+    expect(r.quotedPricePerPc).toBe(157.87)
+  })
+
+  it('per-kg transportation uses the bought-out net weight when given', () => {
+    const r = computeCost(
+      baseInput({
+        boughtOut: { purchasePricePerPc: 50, netWeightKg: 2 },
+        handling: { procurementPct: 0, transportationRate: 3, transportationMode: 'PER_KG', storagePct: 0, packingMode: 'FIXED', packingCost: 0 },
+      })
+    )
+    expect(r.handling.transportation).toBe(6) // 3 * 2
+  })
+
+  it('assembly / inspection process lines are still added on top of the purchase price', () => {
+    const r = computeCost(
+      baseInput({
+        boughtOut: { purchasePricePerPc: 100 },
+        processes: [
+          { sequence: 1, name: 'Incoming test', processType: 'MANUAL', method: 'FLAT_PC', quantityOrTime: 1, rate: 12 },
+        ],
+      })
+    )
+    expect(r.materialCost).toBe(100)
+    expect(r.manualCost).toBe(12)
+  })
+})
 
 describe('computeCost — QC auto-derivation', () => {
   const withCosts = (qc: EngineInput['qc']) =>
@@ -201,7 +280,7 @@ describe('computeCost — full build-up integration', () => {
     batchQty: 100,
     customerRating: 4,
     material: { netWeightKg: 1, forgingLossPct: 20, ratePerKg: 100 }, // iw 1.2 · matCost 120
-    handling: { procurementPct: 10, transportationRate: 10, transportationUom: 'per_kg', storagePct: 5 }, // 30
+    handling: { procurementPct: 10, transportationRate: 10, transportationMode: 'PER_KG', storagePct: 5, packingMode: 'FIXED', packingCost: 0 }, // 30
     processes: [
       { sequence: 2, name: 'CNC turning', processType: 'MACHINE', method: 'CYCLE_TIME', quantityOrTime: 3600, rate: 200 }, // 200
       { sequence: 1, name: 'Deburr', processType: 'MANUAL', method: 'FLAT_PC', quantityOrTime: 1, rate: 15 }, // 15

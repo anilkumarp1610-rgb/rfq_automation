@@ -11,47 +11,14 @@ import { authenticateToken, canEditRfq, AuthRequest } from '../middleware/auth.j
 import { validateBody } from '../lib/validate.js';
 import { ah, bigIntParam, notFound } from '../lib/http.js';
 import { toPartAttributesData } from '../lib/rfqAttributes.js';
-import { resolveEngineInput } from '../cost-engine/resolve.js';
-import { computeCost } from '../cost-engine/engine.js';
-import { CostSummary } from '../cost-engine/types.js';
+import { runCompute } from '../cost-engine/run.js';
 import { buildReference, REFERENCEABLE } from '../reference/build.js';
 import { costSheetViewModel } from '../reports/costSheet.js';
 import { audit } from '../lib/audit.js';
+import { rfqVersionFullInclude as fullInclude, loadRfqVersionFull as loadFull } from '../lib/rfqInclude.js';
 
 const router = Router();
 router.use(authenticateToken);
-
-const fullInclude = {
-  rfq: { include: { customerPart: { include: { customer: true, productType: true } } } },
-  partAttributes: true,
-  materials: { include: { materialSizeConfig: { include: { materialCategory: true, materialShape: true } } } },
-  processes: { include: { process: true, machine: true }, orderBy: { sequence: 'asc' } },
-  costSummary: true,
-  attachments: true,
-  reference: true,
-} as const;
-
-const loadFull = (id: bigint) => prisma.rfqVersion.findUnique({ where: { id }, include: fullInclude });
-
-function summaryToRow(s: CostSummary) {
-  return {
-    materialCost: s.materialCost,
-    handlingCost: s.handlingCost,
-    machiningCost: s.machiningCost,
-    manualCost: s.manualCost,
-    subcontractCost: s.subcontractCost,
-    qcCost: s.qcCost,
-    mfgCost: s.mfgCost,
-    adminCost: s.adminCost,
-    subtotal: s.subtotal,
-    marginPct: s.marginPct,
-    marginAmount: s.marginAmount,
-    quotedPricePerPc: s.quotedPricePerPc,
-    totalQuote: s.totalQuote,
-    aiRecommendedMarginPct: s.aiRecommendedMarginPct,
-    computedAt: new Date(),
-  };
-}
 
 router.get(
   '/:id',
@@ -269,35 +236,17 @@ router.post(
     const id = bigIntParam(req.params.id);
     const b = req.body as import('@rfq/shared').ComputeRequestInput;
 
-    const resolved = await resolveEngineInput(id, {
+    const run = await runCompute(id, {
       asOfDate: b.asOfDate,
       quantity: b.quantity,
       marginAdjustmentPct: b.marginAdjustmentPct,
       marginOverridePct: b.marginOverridePct ?? null,
+      persist: b.persist,
     });
-    if (!resolved) notFound('RFQ version');
-
-    const summary = computeCost(resolved.input);
+    if (!run) notFound('RFQ version');
+    const { summary, warnings } = run!;
 
     if (b.persist) {
-      await prisma.$transaction(async (tx) => {
-        const row = summaryToRow(summary);
-        await tx.rfqCostSummary.upsert({
-          where: { rfqVersionId: id },
-          create: { rfqVersionId: id, ...row },
-          update: row,
-        });
-        for (const p of summary.processes) {
-          if (!p.ref) continue;
-          await tx.rfqProcess.update({
-            where: { id: BigInt(p.ref) },
-            data: { cost: p.cost, rate: p.rate, method: p.method },
-          });
-        }
-        if (resolved.version.status === 'DRAFT') {
-          await tx.rfqVersion.update({ where: { id }, data: { status: 'COSTED' } });
-        }
-      });
       await audit(req, {
         entityType: 'RfqCostSummary',
         entityId: id,
@@ -314,16 +263,7 @@ router.post(
 
     res.json({
       summary,
-      warnings: resolved.warnings,
-      inputs: {
-        asOfDate: resolved.input.asOfDate,
-        quantity: resolved.input.quantity,
-        batchQty: resolved.input.batchQty,
-        customerRating: resolved.input.customerRating,
-        baseMarginPct: resolved.input.baseMarginPct,
-        adminPct: resolved.input.adminPct,
-        materialRatePerKg: resolved.input.material?.ratePerKg ?? null,
-      },
+      warnings,
       version: b.persist ? await loadFull(id) : undefined,
     });
   })

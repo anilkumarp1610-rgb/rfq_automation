@@ -13,6 +13,7 @@ import customerRoutes from './routes/customers.js';
 import masterRoutes from './routes/masters.js';
 import customerPartRoutes from './routes/customerParts.js';
 import rfqRoutes from './routes/rfqs.js';
+import rfqSpecRoutes from './routes/rfqSpec.js';
 import rfqVersionRoutes from './routes/rfqVersions.js';
 import specAnalysisRoutes from './routes/specAnalysis.js';
 import referenceRoutes from './routes/reference.js';
@@ -42,6 +43,7 @@ app.get('/health', (_req: Request, res: Response) => {
 app.use('/auth', authRoutes);
 app.use('/customers', customerRoutes);
 app.use('/customer-parts', customerPartRoutes);
+app.use('/rfqs', rfqSpecRoutes);
 app.use('/rfqs', rfqRoutes);
 app.use('/rfq-versions', rfqVersionRoutes);
 app.use('/rfq-versions', specAnalysisRoutes);

@@ -23,6 +23,9 @@ const versionApi = resource('/rfq-versions')
 const fmtDate = (d?: string | null) => (d ? String(d).slice(0, 10) : '—')
 
 interface AttrForm {
+  sourcingType: string
+  purchasePricePerPc: string
+  supplierName: string
   materialCategoryId: string
   materialShapeId: string
   productTypeId: string
@@ -38,6 +41,9 @@ interface AttrForm {
 }
 
 const emptyAttr: AttrForm = {
+  sourcingType: 'MANUFACTURED',
+  purchasePricePerPc: '',
+  supplierName: '',
   materialCategoryId: '',
   materialShapeId: '',
   productTypeId: '',
@@ -55,6 +61,9 @@ const emptyAttr: AttrForm = {
 function attrToForm(a: any): AttrForm {
   if (!a) return { ...emptyAttr }
   return {
+    sourcingType: a.sourcingType ?? 'MANUFACTURED',
+    purchasePricePerPc: a.purchasePricePerPc ?? '',
+    supplierName: a.supplierName ?? '',
     materialCategoryId: a.materialCategoryId ?? '',
     materialShapeId: a.materialShapeId ?? '',
     productTypeId: a.productTypeId ?? '',
@@ -174,6 +183,12 @@ export default function RfqDetailPage() {
     saveVersion.mutate({
       status: versionStatus,
       partAttributes: {
+        sourcingType: attr.sourcingType,
+        purchasePricePerPc:
+          attr.sourcingType === 'BOUGHT_OUT' && attr.purchasePricePerPc !== ''
+            ? Number(attr.purchasePricePerPc)
+            : null,
+        supplierName: attr.sourcingType === 'BOUGHT_OUT' ? attr.supplierName || null : null,
         materialCategoryId: attr.materialCategoryId || null,
         materialShapeId: attr.materialShapeId || null,
         productTypeId: attr.productTypeId || null,
@@ -192,14 +207,14 @@ export default function RfqDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link to="/rfqs" className="inline-flex items-center gap-1 text-sm text-slate-500 hover:underline">
+      <Link to="/rfqs" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:underline">
         <ArrowLeft className="h-4 w-4" /> All RFQs
       </Link>
 
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">{rfq.rfqNumber}</h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             {part?.customer?.code} · {part?.customerPartNumber} — {part?.partName}
             {part?.currentRevision ? ` · part rev ${part.currentRevision}` : ''}
           </p>
@@ -272,7 +287,7 @@ export default function RfqDetailPage() {
               </div>
             )}
           </form>
-          <p className="text-xs text-slate-400 mt-3">
+          <p className="text-xs text-muted-foreground mt-3">
             RFQ date {fmtDate(rfq.rfqDate)} · currency {rfq.currency}
           </p>
         </CardContent>
@@ -282,7 +297,7 @@ export default function RfqDetailPage() {
       <div className="grid gap-4 md:grid-cols-[220px_1fr]">
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-600">Revisions</h2>
+            <h2 className="text-sm font-semibold text-muted-foreground">Revisions</h2>
             {canEdit && (
               <Button
                 size="sm"
@@ -300,14 +315,14 @@ export default function RfqDetailPage() {
               onClick={() => setSelectedId(String(v.id))}
               className={cn(
                 'w-full rounded-md border p-2 text-left text-sm',
-                String(v.id) === String(selected?.id) ? 'border-primary bg-primary/5' : 'bg-white'
+                String(v.id) === String(selected?.id) ? 'border-primary bg-primary/5' : 'bg-card'
               )}
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium">R{v.revisionNo}</span>
                 {v.isCurrent && <span className="text-[10px] text-primary">CURRENT</span>}
               </div>
-              <div className="text-xs text-slate-500">{v.versionLabel || '—'}</div>
+              <div className="text-xs text-muted-foreground">{v.versionLabel || '—'}</div>
               <div className="mt-1">
                 <StatusBadge status={v.status} />
               </div>
@@ -337,6 +352,44 @@ export default function RfqDetailPage() {
             </CardHeader>
             <CardContent>
               <form className="grid gap-3 md:grid-cols-2" onSubmit={submitAttributes}>
+                <Field label="Sourcing">
+                  <Select
+                    disabled={!canEdit}
+                    value={attr.sourcingType}
+                    onChange={(e) => setAttr((s) => ({ ...s, sourcingType: e.target.value }))}
+                  >
+                    <option value="MANUFACTURED">Manufactured in-house</option>
+                    <option value="BOUGHT_OUT">Bought-out / procured</option>
+                  </Select>
+                </Field>
+                <div className="hidden md:block" />
+
+                {attr.sourcingType === 'BOUGHT_OUT' ? (
+                  <>
+                    <Field label="Purchase price / pc">
+                      <Input
+                        type="number"
+                        step="0.01"
+                        disabled={!canEdit}
+                        value={attr.purchasePricePerPc}
+                        onChange={(e) => setAttr((s) => ({ ...s, purchasePricePerPc: e.target.value }))}
+                      />
+                    </Field>
+                    <Field label="Supplier">
+                      <Input
+                        disabled={!canEdit}
+                        value={attr.supplierName}
+                        onChange={(e) => setAttr((s) => ({ ...s, supplierName: e.target.value }))}
+                      />
+                    </Field>
+                    <p className="md:col-span-2 text-xs text-muted-foreground">
+                      Bought-out: the purchase price replaces the material build-up. Handling, QC,
+                      admin and margin still apply. Add process lines only for assembly / incoming
+                      inspection.
+                    </p>
+                  </>
+                ) : (
+                  <>
                 <Field label="Material grade">
                   <Select
                     disabled={!canEdit}
@@ -365,6 +418,9 @@ export default function RfqDetailPage() {
                     ))}
                   </Select>
                 </Field>
+                  </>
+                )}
+
                 <Field label="Product type">
                   <Select
                     disabled={!canEdit}
@@ -399,15 +455,17 @@ export default function RfqDetailPage() {
                     onChange={(e) => setAttr((s) => ({ ...s, netWeightKg: e.target.value }))}
                   />
                 </Field>
-                <Field label="Forging loss %">
-                  <Input
-                    type="number"
-                    step="0.1"
-                    disabled={!canEdit}
-                    value={attr.forgingLossPct}
-                    onChange={(e) => setAttr((s) => ({ ...s, forgingLossPct: e.target.value }))}
-                  />
-                </Field>
+                {attr.sourcingType !== 'BOUGHT_OUT' && (
+                  <Field label="Forging loss %">
+                    <Input
+                      type="number"
+                      step="0.1"
+                      disabled={!canEdit}
+                      value={attr.forgingLossPct}
+                      onChange={(e) => setAttr((s) => ({ ...s, forgingLossPct: e.target.value }))}
+                    />
+                  </Field>
+                )}
                 <Field label="Surface finish">
                   <Input
                     disabled={!canEdit}
@@ -472,7 +530,7 @@ export default function RfqDetailPage() {
               </form>
 
               {selected.costSummary && (
-                <p className="mt-4 text-sm text-slate-500">
+                <p className="mt-4 text-sm text-muted-foreground">
                   Last computed quote / pc: ₹
                   {Number(selected.costSummary.quotedPricePerPc).toLocaleString('en-IN')}
                 </p>

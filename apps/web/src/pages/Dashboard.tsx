@@ -43,11 +43,11 @@ export default function DashboardPage() {
         {kpis.map((k) => (
           <Card key={k.label}>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">{k.label}</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">{k.label}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold">{isLoading ? '…' : (k.value ?? 0)}</div>
-              {k.sub && <p className="text-xs text-slate-500 mt-1">{k.sub}</p>}
+              {k.sub && <p className="text-xs text-muted-foreground mt-1">{k.sub}</p>}
             </CardContent>
           </Card>
         ))}
@@ -56,16 +56,16 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-500">Open pipeline</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Open pipeline</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{d ? money(d.pipelineValue) : '…'}</div>
-            <p className="text-xs text-slate-500 mt-1">Quoted, awaiting decision</p>
+            <p className="text-xs text-muted-foreground mt-1">Quoted, awaiting decision</p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-500">Won value</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Won value</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{d ? money(d.wonValue) : '…'}</div>
@@ -73,7 +73,7 @@ export default function DashboardPage() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-slate-500">Active customers</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Active customers</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{d?.counts.customers ?? '…'}</div>
@@ -107,7 +107,7 @@ export default function DashboardPage() {
           <CardTitle>Recent activity</CardTitle>
         </CardHeader>
         <CardContent>
-          <ul className="divide-y">
+          <ul className="divide-y divide-border">
             {(d?.recent ?? []).map((r: any) => (
               <li key={r.rfqVersionId} className="flex items-center justify-between py-2 text-sm">
                 <div>
@@ -115,18 +115,18 @@ export default function DashboardPage() {
                     {r.rfqNumber}
                   </Link>{' '}
                   R{r.revisionNo}
-                  <span className="text-slate-400"> · {r.part} · {r.customer ?? '—'}</span>
+                  <span className="text-muted-foreground"> · {r.part} · {r.customer ?? '—'}</span>
                 </div>
                 <div className="flex items-center gap-3">
                   {r.quotedPricePerPc != null && (
-                    <span className="text-slate-500">₹{Number(r.quotedPricePerPc).toLocaleString('en-IN')}/pc</span>
+                    <span className="text-muted-foreground">₹{Number(r.quotedPricePerPc).toLocaleString('en-IN')}/pc</span>
                   )}
                   <StatusBadge status={r.status} />
                 </div>
               </li>
             ))}
             {!isLoading && (d?.recent ?? []).length === 0 && (
-              <li className="py-2 text-sm text-slate-500">No RFQ activity yet.</li>
+              <li className="py-2 text-sm text-muted-foreground">No RFQ activity yet.</li>
             )}
           </ul>
         </CardContent>

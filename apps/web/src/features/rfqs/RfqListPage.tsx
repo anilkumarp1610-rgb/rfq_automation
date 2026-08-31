@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
-import { Search } from 'lucide-react'
+import { Search, Plus } from 'lucide-react'
 import { RFQ_STATUSES } from '@rfq/shared'
 import { resource } from '@/lib/api'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/field'
 import {
@@ -16,6 +17,7 @@ import {
 } from '@/components/ui/table'
 import { StatusBadge } from './StatusBadge'
 import CreateRfqDialog from './CreateRfqDialog'
+import { useAuth } from '@/lib/auth'
 
 const rfqApi = resource('/rfqs')
 const fmtDate = (d?: string | null) => (d ? String(d).slice(0, 10) : '—')
@@ -23,6 +25,7 @@ const fmtMoney = (n?: string | number | null) =>
   n == null ? '—' : `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 
 export default function RfqListPage() {
+  const { canEditRfq } = useAuth()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
 
@@ -39,16 +42,25 @@ export default function RfqListPage() {
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">RFQs</h1>
-          <p className="text-sm text-slate-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Each RFQ carries one or more revision-based versions with its own cost sheet.
           </p>
         </div>
-        <CreateRfqDialog />
+        {canEditRfq && (
+          <div className="flex items-center gap-2">
+            <Link to="/rfqs/new">
+              <Button>
+                <Plus className="h-4 w-4 mr-1" /> New RFQ from spec
+              </Button>
+            </Link>
+            <CreateRfqDialog />
+          </div>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-3">
         <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             className="pl-8"
             placeholder="Search RFQ / part…"
@@ -66,7 +78,7 @@ export default function RfqListPage() {
         </Select>
       </div>
 
-      <div className="rounded-lg border bg-white">
+      <div className="rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -86,7 +98,7 @@ export default function RfqListPage() {
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-slate-500">
+                <TableCell colSpan={7} className="text-muted-foreground">
                   No RFQs yet.
                 </TableCell>
               </TableRow>
@@ -103,7 +115,7 @@ export default function RfqListPage() {
                     <TableCell>{r.customerPart?.customer?.code ?? '—'}</TableCell>
                     <TableCell>
                       {r.customerPart?.customerPartNumber}
-                      <span className="text-slate-400"> · {r.customerPart?.partName}</span>
+                      <span className="text-muted-foreground"> · {r.customerPart?.partName}</span>
                     </TableCell>
                     <TableCell>{current ? `R${current.revisionNo}` : '—'}</TableCell>
                     <TableCell>

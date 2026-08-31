@@ -25,6 +25,9 @@ export interface CostSheetVM {
   part: { number: string; name: string; drawingNo: string | null; revision: string | null; productType: string | null };
   quantity: number;
   batchQty: number;
+  sourcing: 'MANUFACTURED' | 'BOUGHT_OUT';
+  supplier: string | null;
+  purchasePricePerPc: number | null;
   material: { grade: string | null; shape: string | null; inputWeightKg: number | null; ratePerKg: number | null };
   processes: { sequence: number; name: string; type: string; method: string; qtyOrTime: number; rate: number; cost: number }[];
   buildUp: CostSheetLine[];
@@ -71,14 +74,23 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
     matShape = await prisma.materialShape.findUnique({ where: { id: v!.partAttributes.materialShapeId } });
   }
 
+  const boughtOut = v!.partAttributes?.sourcingType === 'BOUGHT_OUT';
+
   const buildUp: CostSheetLine[] = [
-    { label: 'Material base cost', amount: n(s.materialCost) },
-    { label: 'Handling (procurement + transport + storage)', amount: n(s.handlingCost) },
-    { label: 'Machining cost', amount: n(s.machiningCost) },
-    { label: 'Manual process cost', amount: n(s.manualCost) },
-    { label: 'Subcontracting cost', amount: n(s.subcontractCost) },
+    { label: boughtOut ? 'Purchase cost' : 'Material base cost', amount: n(s.materialCost) },
+    { label: 'Handling (procurement + transport + storage + packing)', amount: n(s.handlingCost) },
+    ...(boughtOut
+      ? []
+      : [
+          { label: 'Machining cost', amount: n(s.machiningCost) },
+          { label: 'Manual process cost', amount: n(s.manualCost) },
+          { label: 'Subcontracting cost', amount: n(s.subcontractCost) },
+        ]),
+    ...(boughtOut && n(s.machiningCost) + n(s.manualCost) + n(s.subcontractCost) > 0
+      ? [{ label: 'Assembly / inspection', amount: n(s.machiningCost) + n(s.manualCost) + n(s.subcontractCost) }]
+      : []),
     { label: 'QC cost (auto-derived)', amount: n(s.qcCost) },
-    { label: 'Manufacturing cost', amount: n(s.mfgCost), emphasis: true },
+    { label: boughtOut ? 'Landed cost' : 'Manufacturing cost', amount: n(s.mfgCost), emphasis: true },
     { label: 'Administration cost', amount: n(s.adminCost) },
     { label: 'Subtotal', amount: n(s.subtotal), emphasis: true },
     {
@@ -115,6 +127,9 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
       productType: part.productType?.name ?? null,
     },
     quantity: n(rfq.annualQty) || n(rfq.batchQty) || 1,
+    sourcing: boughtOut ? 'BOUGHT_OUT' : 'MANUFACTURED',
+    supplier: v!.partAttributes?.supplierName ?? null,
+    purchasePricePerPc: v!.partAttributes?.purchasePricePerPc != null ? n(v!.partAttributes.purchasePricePerPc) : null,
     batchQty: n(rfq.batchQty),
     material: {
       grade: matCat?.gradeCode ?? null,

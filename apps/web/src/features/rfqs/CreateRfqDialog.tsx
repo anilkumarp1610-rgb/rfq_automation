@@ -62,7 +62,7 @@ export default function CreateRfqDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button>+ New RFQ</Button>
+        <Button variant="outline">Manual</Button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

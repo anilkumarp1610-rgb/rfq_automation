@@ -5,6 +5,7 @@ import { authenticateToken, canEditRfq, userId, AuthRequest } from '../middlewar
 import { validateBody } from '../lib/validate.js';
 import { ah, bigIntParam, notFound } from '../lib/http.js';
 import { audit } from '../lib/audit.js';
+import { withRfqNumber } from '../lib/rfqNumber.js';
 
 const router = Router();
 router.use(authenticateToken);
@@ -89,36 +90,38 @@ router.post(
     const part = await prisma.customerPart.findUnique({ where: { id: BigInt(b.customerPartId) } });
     if (!part) notFound('Customer part');
 
-    const rfq = await prisma.$transaction(async (tx) => {
-      const created = await tx.rfq.create({
-        data: {
-          rfqNumber: b.rfqNumber,
-          customerPartId: BigInt(b.customerPartId),
-          rfqDate: b.rfqDate,
-          requiredDate: b.requiredDate ?? null,
-          annualQty: b.annualQty ?? null,
-          batchQty: b.batchQty ?? null,
-          currency: b.currency,
-          status: 'DRAFT',
-          createdBy: uid,
-        },
-      });
-      await tx.rfqVersion.create({
-        data: {
-          rfqId: created.id,
-          revisionNo: 1,
-          versionLabel: b.versionLabel ?? null,
-          basedOnPartRevision: b.basedOnPartRevision ?? part!.currentRevision ?? null,
-          status: 'DRAFT',
-          isCurrent: true,
-          createdBy: uid,
-          partAttributes: { create: {} },
-        },
-      });
-      return created;
-    });
+    const rfq = await withRfqNumber((rfqNumber) =>
+      prisma.$transaction(async (tx) => {
+        const created = await tx.rfq.create({
+          data: {
+            rfqNumber: b.rfqNumber || rfqNumber,
+            customerPartId: BigInt(b.customerPartId),
+            rfqDate: b.rfqDate,
+            requiredDate: b.requiredDate ?? null,
+            annualQty: b.annualQty ?? null,
+            batchQty: b.batchQty ?? null,
+            currency: b.currency,
+            status: 'DRAFT',
+            createdBy: uid,
+          },
+        });
+        await tx.rfqVersion.create({
+          data: {
+            rfqId: created.id,
+            revisionNo: 1,
+            versionLabel: b.versionLabel ?? null,
+            basedOnPartRevision: b.basedOnPartRevision ?? part!.currentRevision ?? null,
+            status: 'DRAFT',
+            isCurrent: true,
+            createdBy: uid,
+            partAttributes: { create: {} },
+          },
+        });
+        return created;
+      })
+    );
 
-    await audit(req, { entityType: 'Rfq', entityId: rfq.id, action: 'CREATE', changes: { rfqNumber: b.rfqNumber, customerPartId: b.customerPartId } });
+    await audit(req, { entityType: 'Rfq', entityId: rfq.id, action: 'CREATE', changes: { rfqNumber: rfq.rfqNumber, customerPartId: b.customerPartId } });
     const full = await prisma.rfq.findUnique({ where: { id: rfq.id }, include: rfqInclude });
     res.status(201).json(full);
   })

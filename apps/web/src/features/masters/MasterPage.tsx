@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Search, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
 import { resource, apiError } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
@@ -24,7 +24,7 @@ import {
   DialogFooter,
   DialogTitle,
 } from '@/components/ui/dialog'
-import type { FieldDef, MasterConfig } from './types'
+import type { DrilldownDef, FieldDef, MasterConfig, MasterScope } from './types'
 
 type Row = Record<string, any>
 
@@ -37,7 +37,7 @@ function toFormValue(field: FieldDef, raw: unknown) {
   return raw
 }
 
-function buildPayload(fields: FieldDef[], form: Row): Row {
+function buildPayload(fields: FieldDef[], form: Row, scope?: MasterScope): Row {
   const out: Row = {}
   for (const f of fields) {
     if (f.formHidden) continue
@@ -52,10 +52,21 @@ function buildPayload(fields: FieldDef[], form: Row): Row {
       out[f.name] = v
     }
   }
+  if (scope) out[scope.field] = scope.id
   return out
 }
 
-export default function MasterPage({ config }: { config: MasterConfig }) {
+interface MasterPageProps {
+  config: MasterConfig
+  /** locks the list + form to one parent row (drill-down) */
+  scope?: MasterScope
+  /** open a child tab scoped to a row */
+  onDrill?: (dd: DrilldownDef, row: Row) => void
+  /** rendered inside a group tab shell — suppress the standalone page header */
+  embedded?: boolean
+}
+
+export default function MasterPage({ config, scope, onDrill, embedded }: MasterPageProps) {
   const { user, canEditMasters } = useAuth()
   const canEdit = config.editableByEstimator
     ? !!user?.roles.some((r) => ['ADMIN', 'MANAGER', 'ESTIMATOR'].includes(r))
@@ -68,9 +79,13 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<Row>({})
 
+  const listParams = () => ({
+    ...(config.searchable && search ? { search } : {}),
+    ...(scope ? { [scope.field]: scope.id } : {}),
+  })
   const listQuery = useQuery({
-    queryKey: ['master', config.key, config.searchable ? search : ''],
-    queryFn: () => api.list(config.searchable && search ? { search } : undefined),
+    queryKey: ['master', config.key, scope?.id ?? '', config.searchable ? search : ''],
+    queryFn: () => api.list(listParams()),
   })
 
   // Fetch option lists for every distinct select-with-resource field.
@@ -112,12 +127,13 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
     onError: (e) => toast.error(apiError(e)),
   })
 
-  const tableFields = config.fields.filter((f) => !f.tableHidden)
+  const tableFields = config.fields.filter((f) => !f.tableHidden && f.name !== scope?.field)
 
   function openForm(row: Row | null) {
     setEditing(row)
     const initial: Row = {}
     for (const f of config.fields) initial[f.name] = toFormValue(f, row?.[f.name])
+    if (scope && !row) initial[scope.field] = scope.id
     setForm(initial)
     setOpen(true)
   }
@@ -147,15 +163,16 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
   }
 
   const rows = (listQuery.data as Row[]) ?? []
+  const drilldowns = config.drilldowns ?? []
+  const hasActions = canEdit || (drilldowns.length > 0 && !!onDrill)
+  const colSpan = tableFields.length + 1 + (hasActions ? 1 : 0)
 
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">{config.title}</h1>
-          {config.description && (
-            <p className="text-sm text-slate-500 mt-1">{config.description}</p>
-          )}
+          {!embedded && <h1 className="text-2xl font-bold">{config.title}</h1>}
+          {config.description && <p className="text-sm text-muted-foreground">{config.description}</p>}
         </div>
         {canEdit && (
           <Button onClick={() => openForm(null)}>
@@ -166,7 +183,7 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
 
       {config.searchable && (
         <div className="relative max-w-xs">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             className="pl-8"
             placeholder="Search…"
@@ -176,7 +193,7 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
         </div>
       )}
 
-      <div className="rounded-lg border bg-white">
+      <div className="rounded-lg border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -184,17 +201,17 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
                 <TableHead key={f.name}>{f.label}</TableHead>
               ))}
               <TableHead className="w-24">Status</TableHead>
-              {canEdit && <TableHead className="w-24 text-right">Actions</TableHead>}
+              {hasActions && <TableHead className="w-32 text-right">Actions</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
             {listQuery.isLoading ? (
               <TableRow>
-                <TableCell colSpan={tableFields.length + 2}>Loading…</TableCell>
+                <TableCell colSpan={colSpan}>Loading…</TableCell>
               </TableRow>
             ) : rows.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={tableFields.length + 2} className="text-slate-500">
+                <TableCell colSpan={colSpan} className="text-muted-foreground">
                   No records.
                 </TableCell>
               </TableRow>
@@ -213,21 +230,38 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
                       <Badge variant="success">Active</Badge>
                     )}
                   </TableCell>
-                  {canEdit && (
+                  {hasActions && (
                     <TableCell className="text-right whitespace-nowrap">
-                      <Button variant="ghost" size="icon" onClick={() => openForm(row)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      {!config.hideDelete && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            if (confirm('Delete this record?')) deleteMutation.mutate(String(row.id))
-                          }}
-                        >
-                          <Trash2 className="h-4 w-4 text-red-500" />
-                        </Button>
+                      {onDrill &&
+                        drilldowns.map((dd) => (
+                          <Button
+                            key={dd.tab}
+                            variant="ghost"
+                            size="sm"
+                            className="text-primary"
+                            onClick={() => onDrill(dd, row)}
+                          >
+                            {dd.label} <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                          </Button>
+                        ))}
+                      {canEdit && (
+                        <>
+                          <Button variant="ghost" size="icon" onClick={() => openForm(row)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          {!config.hideDelete && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => {
+                                if (confirm('Delete this record?'))
+                                  deleteMutation.mutate(String(row.id))
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          )}
+                        </>
                       )}
                     </TableCell>
                   )}
@@ -249,57 +283,62 @@ export default function MasterPage({ config }: { config: MasterConfig }) {
             className="grid gap-3"
             onSubmit={(e) => {
               e.preventDefault()
-              saveMutation.mutate(buildPayload(config.fields, form))
+              saveMutation.mutate(buildPayload(config.fields, form, scope))
             }}
           >
             {config.fields
               .filter((f) => !f.formHidden)
-              .map((f) => (
-                <div key={f.name} className="grid gap-1.5">
-                  <Label htmlFor={f.name}>
-                    {f.label}
-                    {f.required && <span className="text-red-500"> *</span>}
-                  </Label>
-                  {f.type === 'textarea' ? (
-                    <Textarea
-                      id={f.name}
-                      value={form[f.name] ?? ''}
-                      onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.value }))}
-                    />
-                  ) : f.type === 'select' ? (
-                    <Select
-                      id={f.name}
-                      value={form[f.name] ?? ''}
-                      required={f.required}
-                      onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.value }))}
-                    >
-                      <option value="">{f.nullable ? '(none / global)' : 'Select…'}</option>
-                      {fieldOptions(f).map((o) => (
-                        <option key={o.value} value={o.value}>
-                          {o.label}
-                        </option>
-                      ))}
-                    </Select>
-                  ) : f.type === 'checkbox' ? (
-                    <input
-                      id={f.name}
-                      type="checkbox"
-                      className="h-4 w-4"
-                      checked={!!form[f.name]}
-                      onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.checked }))}
-                    />
-                  ) : (
-                    <Input
-                      id={f.name}
-                      type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
-                      step={f.step}
-                      required={f.required}
-                      value={form[f.name] ?? ''}
-                      onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.value }))}
-                    />
-                  )}
-                </div>
-              ))}
+              .map((f) => {
+                const locked = scope?.field === f.name
+                return (
+                  <div key={f.name} className="grid gap-1.5">
+                    <Label htmlFor={f.name}>
+                      {f.label}
+                      {f.required && <span className="text-red-500"> *</span>}
+                    </Label>
+                    {locked ? (
+                      <Input id={f.name} value={scope!.label} disabled />
+                    ) : f.type === 'textarea' ? (
+                      <Textarea
+                        id={f.name}
+                        value={form[f.name] ?? ''}
+                        onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.value }))}
+                      />
+                    ) : f.type === 'select' ? (
+                      <Select
+                        id={f.name}
+                        value={form[f.name] ?? ''}
+                        required={f.required}
+                        onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.value }))}
+                      >
+                        <option value="">{f.nullable ? '(none / global)' : 'Select…'}</option>
+                        {fieldOptions(f).map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : f.type === 'checkbox' ? (
+                      <input
+                        id={f.name}
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={!!form[f.name]}
+                        onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.checked }))}
+                      />
+                    ) : (
+                      <Input
+                        id={f.name}
+                        type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'}
+                        step={f.step}
+                        required={f.required}
+                        value={form[f.name] ?? ''}
+                        onChange={(e) => setForm((s) => ({ ...s, [f.name]: e.target.value }))}
+                      />
+                    )}
+                  </div>
+                )
+              })}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                 Cancel

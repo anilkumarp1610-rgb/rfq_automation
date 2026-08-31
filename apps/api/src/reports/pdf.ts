@@ -64,11 +64,20 @@ export function costSheetPdf(vm: CostSheetVM): Promise<Buffer> {
     heading(doc, vm, 'ESTIMATED COST SHEET');
     const full = doc.page.width - doc.page.margins.left - doc.page.margins.right;
 
-    doc.font('Helvetica-Bold').fontSize(10).text('Material');
-    doc.font('Helvetica').fontSize(9).text(
-      `Grade ${vm.material.grade ?? '—'} · ${vm.material.shape ?? '—'} · input weight ${vm.material.inputWeightKg ?? '—'} kg` +
-        (vm.material.ratePerKg ? ` @ ${money(vm, vm.material.ratePerKg)}/kg` : '')
-    );
+    if (vm.sourcing === 'BOUGHT_OUT') {
+      doc.font('Helvetica-Bold').fontSize(10).text('Bought-out component');
+      doc.font('Helvetica').fontSize(9).text(
+        `Supplier ${vm.supplier ?? '—'} · purchase price ${
+          vm.purchasePricePerPc != null ? money(vm, vm.purchasePricePerPc) : '—'
+        } / pc`
+      );
+    } else {
+      doc.font('Helvetica-Bold').fontSize(10).text('Material');
+      doc.font('Helvetica').fontSize(9).text(
+        `Grade ${vm.material.grade ?? '—'} · ${vm.material.shape ?? '—'} · input weight ${vm.material.inputWeightKg ?? '—'} kg` +
+          (vm.material.ratePerKg ? ` @ ${money(vm, vm.material.ratePerKg)}/kg` : '')
+      );
+    }
     doc.moveDown(0.5);
 
     doc.font('Helvetica-Bold').fontSize(10).text('Process lines');

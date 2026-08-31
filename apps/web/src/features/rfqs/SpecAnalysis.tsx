@@ -184,7 +184,7 @@ export default function SpecAnalysis({
   const setItem = (idx: number, patch: Row) =>
     setItems((arr) => arr.map((x, j) => (j === idx ? { ...x, ...patch } : x)))
 
-  if (specQuery.isLoading) return <p className="text-sm text-slate-500">Loading spec analysis…</p>
+  if (specQuery.isLoading) return <p className="text-sm text-muted-foreground">Loading spec analysis…</p>
 
   // ---- No spec yet: upload + analyze ------------------------------------
   if (!spec) {
@@ -194,7 +194,7 @@ export default function SpecAnalysis({
           <CardTitle className="text-base">Spec Analysis</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             Upload the customer drawing (PDF or image). It is read into structured data and saved
             against the part number for this revision.
           </p>
@@ -216,7 +216,7 @@ export default function SpecAnalysis({
             </Button>
           )}
           {attachments.length > 0 && (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-muted-foreground">
               {attachments.length} file(s) uploaded — {attachments[0].fileName}
             </p>
           )}
@@ -238,7 +238,7 @@ export default function SpecAnalysis({
           )}
           {mock && <Badge variant="secondary">mock</Badge>}
           {spec.overallConfidence != null && (
-            <span className="text-xs font-normal text-slate-400">
+            <span className="text-xs font-normal text-muted-foreground">
               conf {Number(spec.overallConfidence).toFixed(2)}
             </span>
           )}
@@ -275,7 +275,7 @@ export default function SpecAnalysis({
         </div>
 
         {/* Derived weights */}
-        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-slate-50 p-3">
+        <div className="flex flex-wrap items-end gap-3 rounded-md border bg-muted/40 p-3">
           <div className="grid gap-1.5">
             <Label>Est. net weight (kg)</Label>
             <Input
@@ -287,7 +287,7 @@ export default function SpecAnalysis({
               onChange={(e) => setEstNet(e.target.value)}
             />
           </div>
-          <div className="text-sm text-slate-500">
+          <div className="text-sm text-muted-foreground">
             Est. input weight: <b>{spec.estInputWeightKg ?? '—'} kg</b> (bounding bar stock)
           </div>
           {canEdit && (
@@ -302,8 +302,8 @@ export default function SpecAnalysis({
           {SPEC_ITEM_TYPES.filter((t) => grouped[t]?.length).map((type) => (
             <div key={type}>
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-semibold text-slate-600">{type}</span>
-                <span className="text-xs text-slate-400">({grouped[type].length})</span>
+                <span className="text-xs font-semibold text-muted-foreground">{type}</span>
+                <span className="text-xs text-muted-foreground">({grouped[type].length})</span>
               </div>
               <div className="rounded-lg border">
                 <Table>
@@ -329,7 +329,7 @@ export default function SpecAnalysis({
                             />
                           </TableCell>
                         ))}
-                        <TableCell className="text-xs text-slate-400">
+                        <TableCell className="text-xs text-muted-foreground">
                           {row.confidence != null ? Number(row.confidence).toFixed(2) : '—'}
                         </TableCell>
                         {canEdit && (

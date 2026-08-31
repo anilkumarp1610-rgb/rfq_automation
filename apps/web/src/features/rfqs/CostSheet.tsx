@@ -161,7 +161,7 @@ export default function CostSheet({
     onError: (e) => toast.error(apiError(e)),
   })
 
-  if (versionQuery.isLoading) return <p className="text-sm text-slate-500">Loading cost sheet…</p>
+  if (versionQuery.isLoading) return <p className="text-sm text-muted-foreground">Loading cost sheet…</p>
 
   const summary = result?.summary ?? deriveSummary(version?.costSummary)
   const warnings: string[] = result?.warnings ?? []
@@ -231,7 +231,7 @@ export default function CostSheet({
             <TableBody>
               {lines.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-slate-500">
+                  <TableCell colSpan={7} className="text-muted-foreground">
                     No process lines.
                   </TableCell>
                 </TableRow>
@@ -259,7 +259,7 @@ export default function CostSheet({
                         ))}
                       </Select>
                     </TableCell>
-                    <TableCell className="text-xs text-slate-500">{proc?.processType ?? '—'}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{proc?.processType ?? '—'}</TableCell>
                     <TableCell>
                       <Select
                         disabled={!canEdit}
@@ -327,7 +327,7 @@ export default function CostSheet({
               <Button size="sm" variant="outline" onClick={() => saveLines.mutate()} disabled={saveLines.isPending}>
                 Save process lines
               </Button>
-              <span className="text-xs text-slate-400 ml-2">
+              <span className="text-xs text-muted-foreground ml-2">
                 Leave rate blank to use the machine-hour rate / process default.
               </span>
             </div>

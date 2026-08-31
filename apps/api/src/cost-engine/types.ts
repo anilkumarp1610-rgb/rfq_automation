@@ -15,7 +15,8 @@ export type CostingMethod =
 
 export type QcMethod = 'PCT_OF_MFG' | 'PER_INSPECTION' | 'RULE';
 
-export type TransportationUom = 'per_kg' | 'per_lot';
+export type TransportationMode = 'PER_KG' | 'PER_LOT' | 'FIXED' | 'PCT';
+export type CostMode = 'FIXED' | 'PCT';
 
 export interface EngineMaterial {
   netWeightKg: number;
@@ -33,9 +34,13 @@ export interface EngineMaterial {
 
 export interface EngineHandling {
   procurementPct: number;
-  transportationRate: number;
-  transportationUom: TransportationUom;
   storagePct: number;
+  /** PER_KG · PER_LOT · FIXED (₹/pc) · PCT (% of the base / purchase cost) */
+  transportationMode: TransportationMode;
+  transportationRate: number;
+  /** FIXED (₹/pc) · PCT (% of the base / purchase cost) */
+  packingMode: CostMode;
+  packingCost: number;
 }
 
 export interface EngineProcessLine {
@@ -60,6 +65,13 @@ export interface EngineQc {
   ruleUpliftPct?: number;
 }
 
+export interface EngineBoughtOut {
+  /** the procurement price for the finished / assembly part */
+  purchasePricePerPc: number;
+  /** known finished weight, used only for per-kg transportation */
+  netWeightKg?: number;
+}
+
 export interface EngineInput {
   asOfDate: Date;
   /** pieces the total quote covers */
@@ -67,6 +79,14 @@ export interface EngineInput {
   /** pieces per batch — amortises per-lot costs */
   batchQty: number;
   customerRating: number;
+
+  /**
+   * When set, the part is BOUGHT_OUT — its purchase price replaces the material
+   * build-up. Handling, QC, admin and margin still apply; process lines are still
+   * summed (e.g. incoming inspection / kitting), so leave them empty for a pure
+   * buy-and-resell item.
+   */
+  boughtOut?: EngineBoughtOut | null;
 
   material: EngineMaterial | null;
   handling: EngineHandling | null;
@@ -90,7 +110,7 @@ export interface CostSummary {
   inputWeightKg: number;
   materialCost: number;
   handlingCost: number;
-  handling: { procurement: number; transportation: number; storage: number };
+  handling: { procurement: number; transportation: number; storage: number; packing: number };
   machiningCost: number;
   manualCost: number;
   subcontractCost: number;

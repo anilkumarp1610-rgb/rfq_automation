@@ -78,27 +78,41 @@ Material base cost
   = Quoted price / piece   ×  quantity = Total quote
 ```
 
-### Material base cost (§4.1)
+### Material base cost / purchase cost (§4.1)
 
 ```
+# MANUFACTURED
 input_weight_kg = net_weight_kg × (1 + forging_loss_pct/100)     ← the forging allowance
 material_cost   = input_weight_kg × (1 + wastage_pct/100) × rate_per_kg(as-of date)
+
+# BOUGHT_OUT (procured / assembly part)
+material_cost   = purchase_price_per_pc
 ```
 
 `rate_per_kg` is resolved from **Material Category (grade) × Shape × Size config**,
 effective‑dated (`material_prices`). If the estimator enters an explicit **material line**
 (e.g. a bar‑stock cut weight), that `input_weight_kg` overrides the `net × (1 + loss)` rule.
 
+A **bought‑out part** (`sourcing_type = BOUGHT_OUT`) skips the material weight/rate and the
+machining build‑up — its purchase price is the base. Handling, QC, admin and margin still
+apply; process lines are still summed, so you can add assembly / incoming‑inspection lines.
+
 ### Handling cost (§4.2)
 
 ```
-procurement    = material_cost × procurement_pct/100
-transportation = transportation_rate × input_weight_kg       (per_kg)
-               = transportation_rate / batch_qty             (per_lot, amortised)
-storage        = material_cost × storage_pct/100
+procurement    = base_cost × procurement_pct/100
+storage        = base_cost × storage_pct/100
+transportation = transportation_value × input_weight_kg   (PER_KG)
+               = transportation_value / batch_qty         (PER_LOT, amortised)
+               = transportation_value                     (FIXED, ₹/pc)
+               = base_cost × transportation_value/100      (PCT)
+packing        = packing_value                            (FIXED, ₹/pc)
+               = base_cost × packing_value/100             (PCT)
 ```
 
-From a **Handling Config** master — global, or per material type (specific wins over global).
+`base_cost` is the material / purchase cost. **Transportation and packing both default to 0**
+and are each either a fixed ₹/pc or a percentage. From a **Handling Config** master — global,
+or per material type (specific wins over global).
 
 ### Machine / manual / subcontract process cost (§4.3–4.5)
 
@@ -156,20 +170,34 @@ the cost summary and written to the audit log.
 
 ### 1. Master data
 
-Full CRUD screens (config‑driven, one generic component) with search, soft‑delete and RBAC:
+All master data is config‑driven (one generic CRUD component) with search, soft‑delete and
+RBAC. The navigation pane has **one entry per functional area**; each opens a **tabbed
+screen**, and parent rows drill into their child records:
+
+| Nav entry | Sections (tabs) | Drill‑down |
+|---|---|---|
+| **Customer Master** | Customers · Rating → Margin | — |
+| **Material Master** | Types · Grades · Shapes · Handling | **Grades** and **Shapes** rows → **Size configs** (scoped) → **Prices** (scoped) |
+| **Process & Machine** | Processes · Machines | — |
+| **Costing Configuration** | Product Types · QC · Overhead / Admin | — |
+
+Size configs and prices are **not** top‑level tabs — they are reached only via a parent row's
+"Size configs" / "Prices" action, which opens the child list filtered to that parent (the
+parent field is pre‑filled and locked in the create form). A "Back" breadcrumb returns up the
+chain. Server‑side this uses `?<fkField>=<id>` filtering (`filterableFields` on the CRUD
+factory).
 
 | Master | Notes |
 |---|---|
 | **Customers** | Rating 1–5 — drives the margin recommendation |
-| **Product types** | Used in part analysis + history reference |
-| **Material hierarchy** | Type → Category (grade, density) → Shape → Size config |
-| **Material prices** | Effective‑dated ₹/kg per size config; supplier, MOQ |
-| **Handling config** | Procurement %, transportation rate + UOM, storage %; global or per material type |
+| **Customer rating → margin map** | Base margin % per rating 1–5 |
+| **Material types → grades → shapes → size configs → prices** | The hierarchy; grade carries density, price is effective‑dated ₹/kg |
+| **Handling config** | Procurement % · storage % · **transportation** (PER_KG / PER_LOT / FIXED ₹/pc / PCT) · **packing** (FIXED ₹/pc / PCT) — transport & packing default to 0; global or per material type |
 | **Processes** | `process_type` (MACHINE/MANUAL/SUBCONTRACT) + `costing_method` + default rate |
 | **Machines** | Hourly‑rate build‑up (the `hourly_rate` is a derived roll‑up) |
+| **Product types** | Used in part analysis + history reference |
 | **QC config** | Method + `qc_pct` + inspection standards (JSON) |
 | **Overhead config** | Administration % |
-| **Customer rating → margin map** | Base margin % per rating 1–5 |
 
 **Effective‑date integrity:** `effectiveTo ≥ effectiveFrom` is enforced, and creating a new
 rate row **auto‑closes the prior still‑open row** (stamps its `effectiveTo` with the new
@@ -180,12 +208,21 @@ rate row **auto‑closes the prior still‑open row** (stamps its `effectiveTo` 
 - **Customer Parts** — the anchor for RFQs and saved spec data (customer, part number, part
   name, product type, drawing no, current revision).
 - **RFQ** — header (RFQ number, part, dates, annual/batch qty, currency, status). Creating an
-  RFQ also creates **revision 1**.
+  RFQ also creates **revision 1**. The **RFQ number is auto-generated** as `YYYY/MM/NNNN` —
+  `NNNN` is a running counter that resets to `0001` when the year rolls over (the month segment
+  is display-only). A number can still be supplied explicitly.
+- **New RFQ from spec** — a wizard (`/rfqs/new`): upload the customer drawing → the part number
+  (usually in the file name), customer, revision and specs are read from it → a **revision
+  prompt** appears if that part already has an RFQ → enter annual/batch qty → the RFQ (or a new
+  revision on the latest RFQ for that part) is created with a **draft cost sheet** already
+  built, and the quotation can be generated in one click. An unknown customer is auto-created
+  (rating 3) and a missing material grade is flagged for the estimator.
 - **RFQ Versions** — `POST /rfqs/:id/versions` adds a new revision: auto `revision_no = max+1`,
   flips `is_current` on the siblings in one transaction, and can copy part attributes from an
   existing version. Every version has its own `rfq_part_attributes`, cost sheet and reference.
 - **RFQ detail screen** — editable RFQ header, a **revision switcher**, per‑revision
-  **part‑attributes** form (material grade/shape, product type, net weight, forging loss %,
+  **part‑attributes** form (**sourcing: manufactured / bought‑out**, then either material
+  grade/shape + forging loss % **or** purchase price + supplier, plus product type, net weight,
   surface finish, hardness, heat treatment, dimensions/tolerances/features, reviewed flag),
   and "Make current".
 - **RFQ grid** — filter by status + free text, status pills, current‑revision quoted price,
@@ -280,6 +317,15 @@ and a clickable **recent‑activity** feed.
 - **Auth** — JWT (24 h); `GET /auth/me` and `POST /auth/refresh`; the SPA re‑hydrates roles
   from the server on load.
 
+### 9. Shell & UX
+
+- **Dark / light theme** — toggled from the top-bar or the user menu; the choice is stored per
+  browser and falls back to the OS preference (applied before first paint, no flash).
+- **Top bar** — app title + a **user menu** on the right (name, email, roles, theme, logout).
+- **Collapsible navigation** — the sidebar hides / shows from the top-bar toggle; the state is
+  remembered.
+- **Full-width content** — the working area (grids, cost sheets) uses the full page width.
+
 ---
 
 ## Roles & permissions
@@ -348,8 +394,9 @@ and port (SPA fallback for non‑API GET routes).
   ids serialize as strings (matching the shared Zod schemas, which treat ids as numeric
   strings).
 - **Generic CRUD factory** (`lib/crud.ts`) — one `crudRouter(delegate, options)` powers every
-  master: search, soft‑delete, FK‑string→BigInt coercion, derived‑field transforms,
-  effective‑date auto‑close, and audit logging.
+  master: search, `?<fk>=<id>` filtering (drill‑down scoping), soft‑delete,
+  FK‑string→BigInt coercion, derived‑field transforms, effective‑date auto‑close, and audit
+  logging.
 - **`RfqPartAttributes` has no FK relations** to material category / shape / product type
   (loose `BigInt?` columns) — those names are resolved with extra `findUnique` calls where
   needed.
@@ -377,7 +424,8 @@ timestamps; effective‑dated masters carry `effective_from` / `effective_to`.
 - `customer_parts` — customer + `customer_part_number` + product type + drawing no + current revision
 - `rfqs` — RFQ number, part, dates, annual/batch qty, currency, status, created by
 - `rfq_versions` — `revision_no`, label, `based_on_part_revision`, status, `is_current`
-- `rfq_part_attributes` — per version: material category/shape, net weight, forging loss %,
+- `rfq_part_attributes` — per version: `sourcing_type` (MANUFACTURED / BOUGHT_OUT),
+  purchase price + supplier (bought‑out), material category/shape, net weight, forging loss %,
   dimensions/tolerances/features (JSON), surface finish, hardness, heat treatment, `reviewed`
 - `rfq_materials` — the material line (size config, input weight, rate/kg, wastage %, cost)
 - `rfq_processes` — process lines (process, machine, method, qty/time, rate, cost, sequence)
@@ -438,7 +486,10 @@ All endpoints require `Authorization: Bearer <jwt>` **except** `POST /auth/login
 `/material/shapes` · `/material/size-configs` · `/material/prices` · `/handling-config` ·
 `/processes` · `/machines` · `/qc-config` · `/overhead-config` · `/customer-margin-map`
 
-List endpoints accept `?search=` (where applicable) and `?activeOnly=false`.
+List endpoints accept `?search=` (where applicable), `?activeOnly=false`, and — for the
+material hierarchy — FK filters for drill‑down (`/material/categories?materialTypeId=`,
+`/material/size-configs?materialCategoryId=&materialShapeId=`,
+`/material/prices?materialSizeConfigId=`, `/handling-config?materialTypeId=`).
 
 ### Customer parts
 | Method | Path | Notes |
@@ -454,9 +505,11 @@ List endpoints accept `?search=` (where applicable) and `?activeOnly=false`.
 | GET | `/rfqs` | `?search=` `?status=` `?customerId=` |
 | GET | `/rfqs/:id` | Full RFQ + all versions |
 | GET | `/rfqs/:id/versions` | Version list |
-| POST | `/rfqs` | Creates RFQ + revision 1 |
+| POST | `/rfqs` | Creates RFQ + revision 1 (`rfqNumber` optional — auto `YYYY/MM/NNNN`) |
 | PUT | `/rfqs/:id` | Header (dates, qty, currency, status) |
 | POST | `/rfqs/:id/versions` | New revision (`copyFromVersionId?`) |
+| POST | `/rfqs/spec-preview` | multipart `file` — analyze a drawing, resolve lookups, **create nothing** |
+| POST | `/rfqs/from-spec` | multipart `file` + `payload` — create the RFQ/revision, spec, draft cost sheet (`409 needsRevisionConfirm` until `confirmRevision:true`) |
 
 ### RFQ version
 | Method | Path | Notes |
@@ -510,14 +563,16 @@ List endpoints accept `?search=` (where applicable) and `?activeOnly=false`.
 src/
   components/
     ui/               button, card, input, label, badge, table, dialog, field (select/textarea)
-    AppShell.tsx      sidebar + layout (masters group, audit-log link gated by role)
-    PrivateRoute.tsx  auth guard + MasterRoute (config-driven master screen)
+    AppShell.tsx      top bar (user menu, theme toggle) + collapsible sidebar + full-width content
+    PrivateRoute.tsx  auth guard
   features/
-    masters/          config-driven CRUD — configs.ts (13 masters), MasterPage.tsx, types.ts
-    rfqs/             RfqListPage, RfqDetailPage, CreateRfqDialog, StatusBadge,
+    masters/          config-driven CRUD — configs.ts (4 groups / sections + drill-downs),
+                      MasterGroupPage.tsx (tab shell), MasterPage.tsx (list + form), types.ts
+    rfqs/             RfqListPage, RfqDetailPage, CreateRfqWizard, CreateRfqDialog, StatusBadge,
                       SpecAnalysis, CostSheet, SimilarRfqs, QuotationPanel, customerPartConfig
   pages/              Login, Dashboard, AuditLog
   lib/                api.ts (axios + resource() + downloadFile), auth.tsx (context), utils.ts
+  main.tsx            applies the saved/system theme before render
   App.tsx             routes + providers (QueryClient, AuthProvider, Toaster)
 ```
 
@@ -527,10 +582,11 @@ src/
 |---|---|
 | `/login` | Login (pre‑filled demo credentials) |
 | `/` | Dashboard — KPIs, 6‑month chart, recent activity |
-| `/rfqs` | RFQ grid — status + search filters, create dialog |
+| `/rfqs` | RFQ grid — status + search filters, "New RFQ from spec" + manual create |
+| `/rfqs/new` | Create-RFQ wizard — upload spec → review → quantities → done |
 | `/rfqs/:id` | RFQ detail — header, revision switcher, part attributes, **Spec Analysis**, **Cost Sheet**, **Reference & similar RFQs**, **Quotation & export** |
 | `/customer-parts` | Customer Parts (config‑driven CRUD) |
-| `/masters/:key` | Any of the 13 master screens |
+| `/masters/:group[/:tab]` | A master group (Customer / Material / Process & Machine / Costing) with tabbed sections + drill‑downs |
 | `/audit-log` | Audit Log (ADMIN/MANAGER) |
 
 The RFQ detail page is the workbench: pick a revision, extract & review the drawing, apply the

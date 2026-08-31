@@ -119,11 +119,18 @@ async function resolveHandling(
     warnings.push('No handling config in effect — handling cost is 0.');
     return null;
   }
+  const TMODES = ['PER_KG', 'PER_LOT', 'FIXED', 'PCT'] as const;
+  const raw = String(hc.transportationMode ?? '').toUpperCase(); // tolerate legacy 'per_kg'
+  const tMode = (TMODES as readonly string[]).includes(raw)
+    ? (raw as (typeof TMODES)[number])
+    : 'FIXED';
   return {
     procurementPct: num(hc.procurementPct),
-    transportationRate: num(hc.transportationRate),
-    transportationUom: hc.transportationUom === 'per_kg' ? 'per_kg' : 'per_lot',
     storagePct: num(hc.storagePct),
+    transportationMode: tMode,
+    transportationRate: num(hc.transportationRate),
+    packingMode: String(hc.packingMode ?? '').toUpperCase() === 'PCT' ? 'PCT' : 'FIXED',
+    packingCost: num(hc.packingCost),
   };
 }
 
@@ -191,7 +198,21 @@ export async function resolveEngineInput(
   const quantity =
     opts.quantity ?? (num(version.rfq.annualQty) || num(version.rfq.batchQty) || 1);
 
-  const material = await resolveMaterial(version, asOfDate, warnings);
+  // Bought-out (procured / assembly) part — purchase price replaces the material build-up.
+  const boughtOut =
+    attrs?.sourcingType === 'BOUGHT_OUT'
+      ? (() => {
+          const price = num(attrs.purchasePricePerPc);
+          if (price <= 0) {
+            warnings.push('Bought-out part has no purchase price — cost is 0.');
+            return null;
+          }
+          const w = num(attrs.netWeightKg);
+          return { purchasePricePerPc: price, ...(w > 0 ? { netWeightKg: w } : {}) };
+        })()
+      : null;
+
+  const material = boughtOut ? null : await resolveMaterial(version, asOfDate, warnings);
 
   let materialTypeId: bigint | null = null;
   if (attrs?.materialCategoryId) {
@@ -220,13 +241,14 @@ export async function resolveEngineInput(
   }
 
   const processes = toEngineProcessLines(version.processes, warnings);
-  if (processes.length === 0) warnings.push('No process lines added yet.');
+  if (processes.length === 0 && !boughtOut) warnings.push('No process lines added yet.');
 
   const input: EngineInput = {
     asOfDate,
     quantity,
     batchQty,
     customerRating: rating,
+    boughtOut,
     material,
     handling,
     processes,

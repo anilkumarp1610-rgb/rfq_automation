@@ -47,32 +47,49 @@ export function processLineCost(
  * the caller-supplied `asOfDate`, no LLM.
  */
 export function computeCost(input: EngineInput): CostSummary {
-  // --- Material (§4.1) ----------------------------------------------------
-  const iw = input.material
-    ? input.material.inputWeightKgOverride != null && input.material.inputWeightKgOverride > 0
-      ? input.material.inputWeightKgOverride
-      : inputWeight(input.material.netWeightKg, input.material.forgingLossPct)
-    : 0;
+  // --- Material / purchase base (§4.1) ----------------------------------
+  const boughtOut = input.boughtOut ?? null;
+  const iw = boughtOut
+    ? boughtOut.netWeightKg ?? 0
+    : input.material
+      ? input.material.inputWeightKgOverride != null && input.material.inputWeightKgOverride > 0
+        ? input.material.inputWeightKgOverride
+        : inputWeight(input.material.netWeightKg, input.material.forgingLossPct)
+      : 0;
   const wastagePct = input.material?.wastagePct ?? 0;
-  const materialCost = input.material
-    ? iw * (1 + wastagePct / 100) * input.material.ratePerKg
-    : 0;
+  const materialCost = boughtOut
+    ? boughtOut.purchasePricePerPc
+    : input.material
+      ? iw * (1 + wastagePct / 100) * input.material.ratePerKg
+      : 0;
 
-  // --- Handling (§4.2) --------------------------------------------------
+  // --- Handling (§4.2) — procurement, transportation, storage, packing ---
+  // "base cost" for the % modes is the material / purchase cost.
   let procurement = 0;
   let transportation = 0;
   let storage = 0;
+  let packing = 0;
   if (input.handling) {
-    procurement = (materialCost * input.handling.procurementPct) / 100;
-    transportation =
-      input.handling.transportationUom === 'per_kg'
-        ? input.handling.transportationRate * iw
-        : input.batchQty > 0
-          ? input.handling.transportationRate / input.batchQty
-          : input.handling.transportationRate;
-    storage = (materialCost * input.handling.storagePct) / 100;
+    const h = input.handling;
+    procurement = (materialCost * h.procurementPct) / 100;
+    storage = (materialCost * h.storagePct) / 100;
+    switch (h.transportationMode) {
+      case 'PER_KG':
+        transportation = h.transportationRate * iw;
+        break;
+      case 'PER_LOT':
+        transportation = input.batchQty > 0 ? h.transportationRate / input.batchQty : h.transportationRate;
+        break;
+      case 'PCT':
+        transportation = (materialCost * h.transportationRate) / 100;
+        break;
+      case 'FIXED':
+      default:
+        transportation = h.transportationRate;
+    }
+    packing = h.packingMode === 'PCT' ? (materialCost * h.packingCost) / 100 : h.packingCost;
   }
-  const handlingCost = procurement + transportation + storage;
+  const handlingCost = procurement + transportation + storage + packing;
 
   // --- Processes (§4.3–4.5) -------------------------------------------
   const ctx = { inputWeightKg: iw, batchQty: input.batchQty };
@@ -127,6 +144,7 @@ export function computeCost(input: EngineInput): CostSummary {
       procurement: round(procurement),
       transportation: round(transportation),
       storage: round(storage),
+      packing: round(packing),
     },
     machiningCost: round(machiningCost),
     manualCost: round(manualCost),
