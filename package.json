@@ -1,0 +1,28 @@
+{
+  "name": "rfq-system",
+  "version": "0.1.0",
+  "description": "RFQ & Cost Estimation System for forging part manufacturers",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=@rfq/api",
+    "dev:web": "npm run dev --workspace=@rfq/web",
+    "dev": "npm run dev:api & npm run dev:web",
+    "typecheck": "npm run typecheck --workspace=@rfq/api && npm run build --workspace=@rfq/web",
+    "build": "npm run build --workspace=@rfq/web",
+    "test": "npm run test --workspace=@rfq/api",
+    "lint": "npm run lint --workspaces --if-present",
+    "prisma:generate": "prisma generate --schema=prisma/schema.prisma",
+    "prisma:migrate": "prisma migrate deploy --schema=prisma/schema.prisma",
+    "prisma:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset --force --schema=prisma/schema.prisma && npm run prisma:seed",
+    "smoke": "tsx scripts/smoke.mjs",
+    "start": "cross-env NODE_ENV=production npm run start --workspace=@rfq/api"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}

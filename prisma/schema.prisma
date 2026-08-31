@@ -1,0 +1,510 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlserver"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// PLATFORM & AUTH
+// ============================================================================
+
+model User {
+  id        BigInt     @id @default(autoincrement())
+  email     String     @unique
+  name      String
+  passwordHash String
+  isActive  Boolean    @default(true) @map("is_active")
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+
+  roles     UserRole[]
+  rfqs      Rfq[]      @relation("CreatedBy")
+
+  @@map("users")
+}
+
+model Role {
+  id    BigInt  @id @default(autoincrement())
+  code  String  @unique  // "ADMIN", "ESTIMATOR", "MANAGER", "VIEWER"
+  name  String
+  roles UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  id     BigInt @id @default(autoincrement())
+  userId BigInt
+  roleId BigInt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model AuditLog {
+  id        BigInt    @id @default(autoincrement())
+  entityType String   // e.g. "RfqVersion", "Customer"
+  entityId  BigInt
+  action    String   // "CREATE", "UPDATE", "DELETE"
+  changes   String   @db.NVarChar(Max) // JSON
+  createdAt DateTime @default(now()) @map("created_at")
+  createdBy BigInt?
+
+  @@map("audit_logs")
+}
+
+// ============================================================================
+// MASTERS: PRODUCT & MATERIAL
+// ============================================================================
+
+model ProductType {
+  id          BigInt   @id @default(autoincrement())
+  name        String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  customerParts CustomerPart[]
+
+  @@map("product_types")
+}
+
+model MaterialType {
+  id   BigInt  @id @default(autoincrement())
+  name String  @unique
+  isActive Boolean @default(true) @map("is_active")
+
+  categories MaterialCategory[]
+  handlingConfigs HandlingConfig[]
+
+  @@map("material_types")
+}
+
+model MaterialCategory {
+  id              BigInt   @id @default(autoincrement())
+  materialTypeId  BigInt   @map("material_type_id")
+  gradeCode       String   @map("grade_code")
+  description     String?
+  densityKgM3     Decimal  @map("density_kg_m3")
+  isActive        Boolean  @default(true) @map("is_active")
+
+  materialType    MaterialType @relation(fields: [materialTypeId], references: [id], onDelete: Cascade)
+  sizeConfigs     MaterialSizeConfig[]
+
+  @@unique([materialTypeId, gradeCode])
+  @@map("material_categories")
+}
+
+model MaterialShape {
+  id   BigInt @id @default(autoincrement())
+  name String @unique // "Round bar", "Billet", "Bloom", "Flat", "Hex"
+  isActive Boolean @default(true) @map("is_active")
+
+  sizeConfigs MaterialSizeConfig[]
+
+  @@map("material_shapes")
+}
+
+model MaterialSizeConfig {
+  id                  BigInt   @id @default(autoincrement())
+  materialCategoryId  BigInt   @map("material_category_id")
+  materialShapeId     BigInt   @map("material_shape_id")
+  odMm                Decimal? @map("od_mm")
+  idMm                Decimal? @map("id_mm")
+  widthMm             Decimal? @map("width_mm")
+  thicknessMm         Decimal? @map("thickness_mm")
+  lengthMm            Decimal? @map("length_mm")
+  uom                 String   // "kg", "pc", etc.
+  standardWeightPerUnit Decimal? @map("standard_weight_per_unit")
+  isActive            Boolean  @default(true) @map("is_active")
+
+  materialCategory    MaterialCategory @relation(fields: [materialCategoryId], references: [id], onDelete: Cascade)
+  materialShape       MaterialShape @relation(fields: [materialShapeId], references: [id], onDelete: Cascade)
+  prices              MaterialPrice[]
+  rfqMaterials        RfqMaterial[]
+
+  @@map("material_size_configs")
+}
+
+model MaterialPrice {
+  id                    BigInt   @id @default(autoincrement())
+  materialSizeConfigId  BigInt   @map("material_size_config_id")
+  ratePerKg             Decimal  @map("rate_per_kg")
+  currency              String   @default("INR")
+  supplier              String?
+  moq                   Decimal? // Minimum Order Quantity
+  effectiveFrom         DateTime @map("effective_from")
+  effectiveTo           DateTime? @map("effective_to")
+  isActive              Boolean  @default(true) @map("is_active")
+
+  materialSizeConfig    MaterialSizeConfig @relation(fields: [materialSizeConfigId], references: [id], onDelete: Cascade)
+
+  @@map("material_prices")
+}
+
+model HandlingConfig {
+  id                    BigInt   @id @default(autoincrement())
+  materialTypeId        BigInt?  @map("material_type_id") // NULL = global config
+  procurementPct        Decimal  @map("procurement_pct")
+  transportationRate    Decimal  @map("transportation_rate")
+  transportationUom     String   @map("transportation_uom") // "per_kg" or "per_lot"
+  storagePct            Decimal  @map("storage_pct")
+  effectiveFrom         DateTime @map("effective_from")
+  effectiveTo           DateTime? @map("effective_to")
+  isActive              Boolean  @default(true) @map("is_active")
+
+  materialType          MaterialType? @relation(fields: [materialTypeId], references: [id], onDelete: SetNull)
+
+  @@map("handling_configs")
+}
+
+// ============================================================================
+// MASTERS: PROCESSES & MACHINES
+// ============================================================================
+
+model Process {
+  id              BigInt   @id @default(autoincrement())
+  name            String
+  processType     String   @map("process_type") // "MACHINE", "MANUAL", "SUBCONTRACT"
+  costingMethod   String   @map("costing_method") // "CYCLE_TIME", "PER_KG", "PER_STROKE", "PER_OP", "FLAT_PC", "PER_LOT"
+  defaultRate     Decimal? @map("default_rate")
+  uom             String   // "hour", "kg", "stroke", "pc", "lot"
+  description     String?
+  isActive        Boolean  @default(true) @map("is_active")
+
+  rfqProcesses    RfqProcess[]
+
+  @@map("processes")
+}
+
+model Machine {
+  id                BigInt   @id @default(autoincrement())
+  name              String   @unique
+  type              String   // "CNC Turning", "VMC", "Press", "Hammer"
+  hourlyRate        Decimal  @map("hourly_rate")
+  depreciationHr    Decimal  @map("depreciation_hr")
+  powerHr           Decimal  @map("power_hr")
+  maintenanceHr     Decimal  @map("maintenance_hr")
+  operatorHr        Decimal  @map("operator_hr")
+  toolingHr         Decimal  @map("tooling_hr")
+  overheadHr        Decimal  @map("overhead_hr")
+  isActive          Boolean  @default(true) @map("is_active")
+
+  rfqProcesses      RfqProcess[]
+
+  @@map("machines")
+}
+
+model QcConfig {
+  id                BigInt   @id @default(autoincrement())
+  method            String   // "PCT_OF_MFG", "PER_INSPECTION", "RULE"
+  qcPct             Decimal  @map("qc_pct")
+  inspectionStandards String? @map("inspection_standards") @db.NVarChar(Max) // JSON
+  effectiveFrom     DateTime @map("effective_from")
+  effectiveTo       DateTime? @map("effective_to")
+  isActive          Boolean  @default(true) @map("is_active")
+
+  @@map("qc_configs")
+}
+
+model OverheadConfig {
+  id            BigInt   @id @default(autoincrement())
+  adminPct      Decimal  @map("admin_pct")
+  effectiveFrom DateTime @map("effective_from")
+  effectiveTo   DateTime? @map("effective_to")
+  isActive      Boolean  @default(true) @map("is_active")
+
+  @@map("overhead_configs")
+}
+
+model CustomerMarginMap {
+  id             BigInt   @id @default(autoincrement())
+  rating         Int      // 1-5
+  baseMarginPct  Decimal  @map("base_margin_pct")
+  effectiveFrom  DateTime @map("effective_from")
+  effectiveTo    DateTime? @map("effective_to")
+  isActive       Boolean  @default(true) @map("is_active")
+
+  @@unique([rating, effectiveFrom])
+  @@map("customer_margin_maps")
+}
+
+// ============================================================================
+// CUSTOMERS
+// ============================================================================
+
+model Customer {
+  id                 BigInt   @id @default(autoincrement())
+  code               String   @unique
+  name               String
+  rating             Int      @default(3) // 1-5
+  commercialScore    Decimal? @map("commercial_score")
+  paymentTerms       String?  @map("payment_terms")
+  currency           String   @default("INR")
+  gstNo              String?  @map("gst_no")
+  taxApplicable      Boolean  @default(true) @map("tax_applicable")
+  deliveryLocation   String?  @map("delivery_location")
+  address            String?
+  contactName        String?  @map("contact_name")
+  contactEmail       String?  @map("contact_email")
+  isActive           Boolean  @default(true) @map("is_active")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  parts              CustomerPart[]
+
+  @@map("customers")
+}
+
+// ============================================================================
+// CUSTOMER PARTS & RFQ (VERSIONED)
+// ============================================================================
+
+model CustomerPart {
+  id                   BigInt   @id @default(autoincrement())
+  customerId           BigInt?  @map("customer_id")
+  customerPartNumber   String   @map("customer_part_number")
+  partName             String   @map("part_name")
+  productTypeId        BigInt?  @map("product_type_id")
+  drawingNo            String?  @map("drawing_no")
+  currentRevision      String?  @map("current_revision")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  customer             Customer? @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  productType          ProductType? @relation(fields: [productTypeId], references: [id], onDelete: SetNull)
+  rfqs                 Rfq[]
+  specAnalyses         SpecAnalysis[] @relation("PartSpecs")
+
+  @@map("customer_parts")
+}
+
+model Rfq {
+  id              BigInt    @id @default(autoincrement())
+  rfqNumber       String    @unique @map("rfq_number")
+  customerPartId  BigInt    @map("customer_part_id")
+  rfqDate         DateTime  @default(now()) @map("rfq_date")
+  requiredDate    DateTime? @map("required_date")
+  annualQty       Decimal?  @map("annual_qty")
+  batchQty        Decimal?  @map("batch_qty")
+  currency        String    @default("INR")
+  status          String    @default("DRAFT")
+  createdBy       BigInt    @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  customerPart    CustomerPart @relation(fields: [customerPartId], references: [id], onDelete: Cascade)
+  createdByUser   User @relation("CreatedBy", fields: [createdBy], references: [id], onDelete: NoAction)
+  versions        RfqVersion[]
+
+  @@map("rfqs")
+}
+
+model RfqVersion {
+  id                     BigInt    @id @default(autoincrement())
+  rfqId                  BigInt    @map("rfq_id")
+  revisionNo             Int       @map("revision_no")
+  versionLabel           String?   @map("version_label")
+  basedOnPartRevision    String?   @map("based_on_part_revision")
+  status                 String    @default("DRAFT") @map("status")
+  isCurrent              Boolean   @default(true) @map("is_current")
+  createdBy              BigInt    @map("created_by")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  rfq                    Rfq @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  partAttributes         RfqPartAttributes?
+  materials              RfqMaterial[]
+  processes              RfqProcess[]
+  costSummary            RfqCostSummary?
+  attachments            RfqAttachment[]
+  reference              RfqReference?
+  specAnalyses           SpecAnalysis[] @relation("VersionSpecs")
+
+  @@unique([rfqId, revisionNo])
+  @@map("rfq_versions")
+}
+
+model RfqPartAttributes {
+  id                    BigInt   @id @default(autoincrement())
+  rfqVersionId          BigInt   @unique @map("rfq_version_id")
+  materialCategoryId    BigInt?  @map("material_category_id")
+  materialShapeId       BigInt?  @map("material_shape_id")
+  netWeightKg           Decimal? @map("net_weight_kg")
+  forgiveLossPct        Decimal? @map("forging_loss_pct")
+  dimensions            String?  @db.NVarChar(Max) // JSON
+  tolerances            String?  @db.NVarChar(Max) // JSON
+  surfaceFinish         String?  @map("surface_finish")
+  hardness              String?
+  heatTreatment         String?  @map("heat_treatment")
+  features              String?  @db.NVarChar(Max) // JSON
+  productTypeId         BigInt?  @map("product_type_id")
+  aiExtracted           Boolean  @default(false) @map("ai_extracted")
+  reviewed              Boolean  @default(false)
+
+  rfqVersion            RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
+
+  @@map("rfq_part_attributes")
+}
+
+model RfqMaterial {
+  id                    BigInt   @id @default(autoincrement())
+  rfqVersionId          BigInt   @map("rfq_version_id")
+  materialSizeConfigId  BigInt   @map("material_size_config_id")
+  inputWeightKg         Decimal  @map("input_weight_kg")
+  ratePerKg             Decimal  @map("rate_per_kg")
+  wastagePct            Decimal  @default(0) @map("wastage_pct")
+  materialCost          Decimal  @map("material_cost")
+
+  rfqVersion            RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
+  materialSizeConfig    MaterialSizeConfig @relation(fields: [materialSizeConfigId], references: [id])
+
+  @@map("rfq_materials")
+}
+
+model RfqProcess {
+  id             BigInt   @id @default(autoincrement())
+  rfqVersionId   BigInt   @map("rfq_version_id")
+  processId      BigInt   @map("process_id")
+  machineId      BigInt?  @map("machine_id")
+  method         String   // Costing method
+  quantityOrTime Decimal  @map("quantity_or_time")
+  rate           Decimal
+  cost           Decimal
+  sequence       Int
+
+  rfqVersion     RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
+  process        Process @relation(fields: [processId], references: [id])
+  machine        Machine? @relation(fields: [machineId], references: [id], onDelete: SetNull)
+
+  @@map("rfq_processes")
+}
+
+model RfqCostSummary {
+  id                       BigInt   @id @default(autoincrement())
+  rfqVersionId             BigInt   @unique @map("rfq_version_id")
+  materialCost             Decimal  @map("material_cost")
+  handlingCost             Decimal  @map("handling_cost")
+  machiningCost            Decimal  @map("machining_cost")
+  manualCost               Decimal  @map("manual_cost")
+  subcontractCost          Decimal  @map("subcontract_cost")
+  qcCost                   Decimal  @map("qc_cost")
+  mfgCost                  Decimal  @map("mfg_cost")
+  adminCost                Decimal  @map("admin_cost")
+  subtotal                 Decimal
+  marginPct                Decimal  @map("margin_pct")
+  marginAmount             Decimal  @map("margin_amount")
+  quotedPricePerPc         Decimal  @map("quoted_price_per_pc")
+  totalQuote               Decimal  @map("total_quote")
+  aiRecommendedMarginPct   Decimal? @map("ai_recommended_margin_pct")
+  computedAt               DateTime @default(now()) @map("computed_at")
+
+  rfqVersion               RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
+
+  @@map("rfq_cost_summaries")
+}
+
+model RfqAttachment {
+  id            BigInt   @id @default(autoincrement())
+  rfqVersionId  BigInt   @map("rfq_version_id")
+  fileName      String   @map("file_name")
+  path          String
+  mime          String
+  uploadedAt    DateTime @default(now()) @map("uploaded_at")
+
+  rfqVersion    RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
+  specAnalyses  SpecAnalysis[]
+
+  @@map("rfq_attachments")
+}
+
+model RfqReference {
+  id                    BigInt   @id @default(autoincrement())
+  rfqVersionId          BigInt   @unique @map("rfq_version_id")
+  productTypeId         BigInt?  @map("product_type_id")
+  materialCategoryId    BigInt?  @map("material_category_id")
+  keyDims               String?  @map("key_dims") @db.NVarChar(Max) // JSON
+  quotedPricePerPc      Decimal  @map("quoted_price_per_pc")
+  outcome               String   // "WON", "LOST"
+  actualCost            Decimal? @map("actual_cost")
+
+  rfqVersion            RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
+
+  @@map("rfq_references")
+}
+
+// ============================================================================
+// SPEC ANALYSIS (Phase 4)
+// ============================================================================
+
+model SpecAnalysis {
+  id                  BigInt   @id @default(autoincrement())
+  customerPartId      BigInt   @map("customer_part_id")
+  rfqVersionId        BigInt?  @map("rfq_version_id")
+  attachmentId        BigInt?  @map("attachment_id")
+  drawingNo           String?  @map("drawing_no")
+  title               String?
+  customerName        String?  @map("customer_name")
+  coNo                String?  @map("co_no")
+  revision            String?
+  sheetSize           String?  @map("sheet_size")
+  scale               String?
+  materialNote        String?  @map("material_note")
+  designedBy          String?  @map("designed_by")
+  detailedBy          String?  @map("detailed_by")
+  checkedBy           String?  @map("checked_by")
+  drawnDate           DateTime? @map("drawn_date")
+  productType         String?  @map("product_type")
+  overallLengthMm     Decimal? @map("overall_length_mm")
+  maxOdMm             Decimal? @map("max_od_mm")
+  acrossFlatsMm       Decimal? @map("across_flats_mm")
+  sectionView         String?  @map("section_view")
+  generalTolTable     String?  @map("general_tol_table") @db.NVarChar(Max)
+  notes               String?  @db.NVarChar(Max)
+  estNetWeightKg      Decimal? @map("est_net_weight_kg")
+  estInputWeightKg    Decimal? @map("est_input_weight_kg")
+  rawExtract          String?  @map("raw_extract") @db.NVarChar(Max)
+  overallConfidence   Decimal? @map("overall_confidence")
+  reviewed            Boolean  @default(false)
+  createdBy           BigInt?  @map("created_by")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  customerPart        CustomerPart @relation("PartSpecs", fields: [customerPartId], references: [id], onDelete: NoAction)
+  rfqVersion          RfqVersion? @relation("VersionSpecs", fields: [rfqVersionId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  attachment          RfqAttachment? @relation(fields: [attachmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  items               SpecAnalysisItem[]
+
+  @@unique([customerPartId, revision])
+  @@map("spec_analyses")
+}
+
+model SpecAnalysisItem {
+  id              BigInt   @id @default(autoincrement())
+  specAnalysisId  BigInt   @map("spec_analysis_id")
+  itemType        String   @map("item_type") // DIAMETER, LENGTH, THREAD, HOLE, CHAMFER, UNDERCUT, GROOVE, GDT, SURFACE_FINISH, TOLERANCE, ACROSS_FLATS, NOTE
+  label           String?
+  nominalValue    Decimal? @map("nominal_value")
+  unit            String?
+  tolUpper        Decimal? @map("tol_upper")
+  tolLower        Decimal? @map("tol_lower")
+  tolClass        String?  @map("tol_class") // e.g., "m6"
+  datum           String?
+  gdtType         String?  @map("gdt_type")
+  rawText         String?  @map("raw_text") @db.NVarChar(Max)
+  confidence      Decimal?
+  reviewed        Boolean  @default(false)
+
+  specAnalysis    SpecAnalysis @relation(fields: [specAnalysisId], references: [id], onDelete: Cascade)
+
+  @@map("spec_analysis_items")
+}
