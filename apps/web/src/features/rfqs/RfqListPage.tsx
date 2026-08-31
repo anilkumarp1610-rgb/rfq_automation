@@ -7,14 +7,7 @@ import { resource } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/field'
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table'
+import DataGrid, { type GridColumn } from '@/components/DataGrid'
 import { StatusBadge } from './StatusBadge'
 import CreateRfqDialog from './CreateRfqDialog'
 import { useAuth } from '@/lib/auth'
@@ -24,6 +17,9 @@ const fmtDate = (d?: string | null) => (d ? String(d).slice(0, 10) : '—')
 const fmtMoney = (n?: string | number | null) =>
   n == null ? '—' : `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
 
+type Row = Record<string, any>
+const current = (r: Row) => r.versions?.[0]
+
 export default function RfqListPage() {
   const { canEditRfq } = useAuth()
   const [search, setSearch] = useState('')
@@ -31,11 +27,64 @@ export default function RfqListPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ['rfqs', search, status],
-    queryFn: () =>
-      rfqApi.list({ search: search || undefined, status: status || undefined }),
+    queryFn: () => rfqApi.list({ search: search || undefined, status: status || undefined }),
   })
 
-  const rows = (data as any[]) ?? []
+  const rows = (data as Row[]) ?? []
+
+  const columns: GridColumn<Row>[] = [
+    {
+      key: 'rfqNumber',
+      header: 'RFQ #',
+      cell: (r) => (
+        <Link className="font-medium text-primary hover:underline" to={`/rfqs/${r.id}`}>
+          {r.rfqNumber}
+        </Link>
+      ),
+    },
+    {
+      key: 'customer',
+      header: 'Customer',
+      sortValue: (r) => r.customerPart?.customer?.code,
+      cell: (r) => r.customerPart?.customer?.code ?? '—',
+    },
+    {
+      key: 'part',
+      header: 'Part',
+      sortValue: (r) => r.customerPart?.customerPartNumber,
+      cell: (r) => (
+        <>
+          {r.customerPart?.customerPartNumber}
+          <span className="text-muted-foreground"> · {r.customerPart?.partName}</span>
+        </>
+      ),
+    },
+    {
+      key: 'rev',
+      header: 'Current rev',
+      sortValue: (r) => current(r)?.revisionNo ?? 0,
+      cell: (r) => (current(r) ? `R${current(r).revisionNo}` : '—'),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      sortValue: (r) => current(r)?.status ?? r.status,
+      cell: (r) => <StatusBadge status={current(r)?.status ?? r.status} />,
+    },
+    {
+      key: 'quoted',
+      header: 'Quoted / pc',
+      align: 'right',
+      sortValue: (r) => Number(current(r)?.costSummary?.quotedPricePerPc ?? -1),
+      cell: (r) => fmtMoney(current(r)?.costSummary?.quotedPricePerPc),
+    },
+    {
+      key: 'rfqDate',
+      header: 'RFQ date',
+      sortValue: (r) => r.rfqDate,
+      cell: (r) => fmtDate(r.rfqDate),
+    },
+  ]
 
   return (
     <div className="space-y-4">
@@ -58,78 +107,38 @@ export default function RfqListPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <div className="relative max-w-xs flex-1">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search RFQ / part…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-        <Select className="max-w-[12rem]" value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          {RFQ_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </Select>
-      </div>
-
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>RFQ #</TableHead>
-              <TableHead>Customer</TableHead>
-              <TableHead>Part</TableHead>
-              <TableHead>Current rev</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Quoted / pc</TableHead>
-              <TableHead>RFQ date</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {isLoading ? (
-              <TableRow>
-                <TableCell colSpan={7}>Loading…</TableCell>
-              </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={7} className="text-muted-foreground">
-                  No RFQs yet.
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((r) => {
-                const current = r.versions?.[0]
-                return (
-                  <TableRow key={r.id}>
-                    <TableCell>
-                      <Link className="font-medium text-primary hover:underline" to={`/rfqs/${r.id}`}>
-                        {r.rfqNumber}
-                      </Link>
-                    </TableCell>
-                    <TableCell>{r.customerPart?.customer?.code ?? '—'}</TableCell>
-                    <TableCell>
-                      {r.customerPart?.customerPartNumber}
-                      <span className="text-muted-foreground"> · {r.customerPart?.partName}</span>
-                    </TableCell>
-                    <TableCell>{current ? `R${current.revisionNo}` : '—'}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={current?.status ?? r.status} />
-                    </TableCell>
-                    <TableCell>{fmtMoney(current?.costSummary?.quotedPricePerPc)}</TableCell>
-                    <TableCell>{fmtDate(r.rfqDate)}</TableCell>
-                  </TableRow>
-                )
-              })
-            )}
-          </TableBody>
-        </Table>
-      </div>
+      <DataGrid
+        columns={columns}
+        rows={rows}
+        getRowKey={(r) => String(r.id)}
+        loading={isLoading}
+        emptyText="No RFQs yet."
+        toolbar={
+          <div className="flex flex-wrap gap-3">
+            <div className="relative max-w-xs flex-1">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Search RFQ / part…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <Select
+              className="max-w-[12rem]"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+            >
+              <option value="">All statuses</option>
+              {RFQ_STATUSES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </Select>
+          </div>
+        }
+      />
     </div>
   )
 }

@@ -6,13 +6,34 @@ const today = new Date();
 
 async function seedPlatform() {
   const roles = [
-    { code: 'ADMIN', name: 'Administrator' },
-    { code: 'ESTIMATOR', name: 'Estimator' },
-    { code: 'MANAGER', name: 'Manager' },
-    { code: 'VIEWER', name: 'Viewer' },
+    {
+      code: 'ADMIN',
+      name: 'Admin',
+      description: 'Full access — manage RFQs, quotes, all masters, company details, users and roles.',
+    },
+    {
+      code: 'MANAGER',
+      name: 'Manager',
+      description: 'Edit RFQs / quotes and all master data and company details. Cannot manage users or roles.',
+    },
+    {
+      code: 'ESTIMATOR',
+      name: 'Estimator',
+      description: 'Create and cost RFQs and generate quotations. Cannot edit master data or company details.',
+    },
+    {
+      code: 'VIEWER',
+      name: 'View only',
+      description:
+        'Can view RFQs and download the quotation PDF. Cannot add, update or regenerate any RFQ / quote, or manage masters, company details, users or roles.',
+    },
   ];
   for (const r of roles) {
-    await prisma.role.upsert({ where: { code: r.code }, update: {}, create: r });
+    await prisma.role.upsert({
+      where: { code: r.code },
+      update: { name: r.name, description: r.description, isSystem: true },
+      create: { ...r, isSystem: true },
+    });
   }
 
   const adminRole = await prisma.role.findUniqueOrThrow({ where: { code: 'ADMIN' } });
@@ -31,6 +52,27 @@ async function seedPlatform() {
     create: { userId: admin.id, roleId: adminRole.id },
   });
   console.log('✓ Roles + admin user (admin@rfq.local / Admin@123)');
+
+  // The company / firm profile is a singleton — make sure exactly one row exists
+  // so the Company Details screen always opens on a real record.
+  const company = await prisma.companySettings.findFirst({ where: { singleton: true } });
+  if (!company) {
+    await prisma.companySettings.create({
+      data: {
+        singleton: true,
+        name: 'Sparkline Equipments (P) Ltd',
+        address:
+          'Plot 42, Phase II, Peenya Industrial Area\nBengaluru, Karnataka 560058\nIndia',
+        phone: '+91 80 2839 1200',
+        email: 'sales@sparklineequipments.co.in',
+        website: 'www.sparklineequipments.co.in',
+        gstNo: '29AABCS1234F1Z5',
+        footerNote:
+          'Bank: HDFC Bank, Peenya Branch  |  A/C 50200012345678  |  IFSC HDFC0001234\nAll disputes subject to Bengaluru jurisdiction. E&OE.',
+      },
+    });
+    console.log('✓ Company profile seeded');
+  }
 }
 
 async function seedMasters() {

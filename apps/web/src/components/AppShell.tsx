@@ -5,6 +5,8 @@ import {
   Package,
   Database,
   ScrollText,
+  Building2,
+  ShieldCheck,
   LogOut,
   ChevronDown,
   PanelLeftClose,
@@ -14,7 +16,9 @@ import {
   User,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAuth } from '@/lib/auth'
+import { apiClient } from '@/lib/api'
 import { MASTER_GROUPS } from '@/features/masters/configs'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -54,9 +58,15 @@ function useTheme() {
 }
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const { user, logout, isAdminOrManager } = useAuth()
+  const { user, logout, isAdminOrManager, isAdmin, canEditMasters, canEditRfq } = useAuth()
   const navigate = useNavigate()
   const { dark, toggle } = useTheme()
+  const company = useQuery({
+    queryKey: ['company-name'],
+    queryFn: () => apiClient.get('/company').then((r) => r.data),
+    staleTime: 5 * 60_000,
+  })
+  const orgName = (company.data as { name?: string } | null)?.name || 'RFQ & Costing'
 
   const [navOpen, setNavOpen] = useState(() => readBool('navOpen', true))
   const [mastersOpen, setMastersOpen] = useState(() => readBool('mastersOpen', true))
@@ -104,7 +114,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         >
           {navOpen ? <PanelLeftClose className="h-5 w-5" /> : <PanelLeft className="h-5 w-5" />}
         </Button>
-        <span className="font-bold">RFQ &amp; Costing</span>
+        <span className="font-bold truncate max-w-[40vw]">{orgName}</span>
 
         <div className="ml-auto flex items-center gap-1">
           <Button variant="ghost" size="icon" onClick={toggle} aria-label="Toggle theme">
@@ -132,16 +142,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
                 <div className="my-1 border-t" />
                 <button
-                  className="flex w-full items-center gap-2 rounded px-3 py-1.5 hover:bg-muted"
-                  onClick={() => {
-                    toggle()
-                    setMenuOpen(false)
-                  }}
-                >
-                  {dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                  {dark ? 'Light theme' : 'Dark theme'}
-                </button>
-                <button
                   className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-red-500 hover:bg-muted"
                   onClick={doLogout}
                 >
@@ -167,32 +167,48 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           <NavLink to="/rfqs" className={navLinkClass}>
             <FileText className="h-4 w-4" /> RFQs
           </NavLink>
-          <NavLink to="/customer-parts" className={navLinkClass}>
-            <Package className="h-4 w-4" /> Customer Parts
-          </NavLink>
+          {canEditRfq && (
+            <NavLink to="/customer-parts" className={navLinkClass}>
+              <Package className="h-4 w-4" /> Customer Parts
+            </NavLink>
+          )}
 
-          <button
-            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-            onClick={() => setMastersOpen((o) => !o)}
-          >
-            <Database className="h-4 w-4" /> Masters
-            <ChevronDown
-              className={cn('h-4 w-4 ml-auto transition-transform', mastersOpen && 'rotate-180')}
-            />
-          </button>
-          {mastersOpen && (
-            <div className="ml-3 border-l pl-2 space-y-0.5">
-              {MASTER_GROUPS.map((g) => (
-                <NavLink key={g.key} to={`/masters/${g.key}`} className={navLinkClass}>
-                  <span className="truncate">{g.title}</span>
-                </NavLink>
-              ))}
-            </div>
+          {canEditMasters && (
+            <>
+              <button
+                className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => setMastersOpen((o) => !o)}
+              >
+                <Database className="h-4 w-4" /> Masters
+                <ChevronDown
+                  className={cn('h-4 w-4 ml-auto transition-transform', mastersOpen && 'rotate-180')}
+                />
+              </button>
+              {mastersOpen && (
+                <div className="ml-3 border-l pl-2 space-y-0.5">
+                  {MASTER_GROUPS.map((g) => (
+                    <NavLink key={g.key} to={`/masters/${g.key}`} className={navLinkClass}>
+                      <span className="truncate">{g.title}</span>
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {isAdminOrManager && (
-            <NavLink to="/audit-log" className={navLinkClass}>
-              <ScrollText className="h-4 w-4" /> Audit Log
+            <>
+              <NavLink to="/company" className={navLinkClass}>
+                <Building2 className="h-4 w-4" /> Company Details
+              </NavLink>
+              <NavLink to="/audit-log" className={navLinkClass}>
+                <ScrollText className="h-4 w-4" /> Audit Log
+              </NavLink>
+            </>
+          )}
+          {isAdmin && (
+            <NavLink to="/security" className={navLinkClass}>
+              <ShieldCheck className="h-4 w-4" /> Security
             </NavLink>
           )}
         </nav>

@@ -318,4 +318,30 @@ describe('computeCost — full build-up integration', () => {
   it('is deterministic — same inputs, same output', () => {
     expect(computeCost(input)).toEqual(computeCost(input));
   });
+
+  it('emits an explain section per cost-sheet row, each result matching the summary', () => {
+    const r = computeCost(input);
+    const keys = r.explain.map((s) => s.key);
+    expect(keys).toEqual([
+      'material', 'handling', 'machining', 'manual', 'subcontract',
+      'qc', 'mfg', 'admin', 'subtotal', 'margin', 'quoted', 'total',
+    ]);
+    const by = Object.fromEntries(r.explain.map((s) => [s.key, s.result]));
+    expect(by.material).toBe(r.materialCost);
+    expect(by.handling).toBe(r.handlingCost);
+    expect(by.machining).toBe(r.machiningCost);
+    expect(by.qc).toBe(r.qcCost);
+    expect(by.mfg).toBe(r.mfgCost);
+    expect(by.subtotal).toBe(r.subtotal);
+    expect(by.margin).toBe(r.marginAmount);
+    expect(by.quoted).toBe(r.quotedPricePerPc);
+    expect(by.total).toBe(r.totalQuote);
+  });
+
+  it('explains a bought-out part as a purchase cost, not a material build-up', () => {
+    const r = computeCost({ ...input, material: null, boughtOut: { purchasePricePerPc: 250 } });
+    const mat = r.explain.find((s) => s.key === 'material')!;
+    expect(mat.title).toBe('Purchase cost');
+    expect(mat.result).toBe(250);
+  });
 });

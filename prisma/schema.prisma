@@ -18,6 +18,7 @@ model User {
   id        BigInt     @id @default(autoincrement())
   email     String     @unique
   name      String
+  phone     String?
   passwordHash String
   isActive  Boolean    @default(true) @map("is_active")
   createdAt DateTime   @default(now()) @map("created_at")
@@ -30,10 +31,13 @@ model User {
 }
 
 model Role {
-  id    BigInt  @id @default(autoincrement())
-  code  String  @unique  // "ADMIN", "ESTIMATOR", "MANAGER", "VIEWER"
-  name  String
-  roles UserRole[]
+  id          BigInt  @id @default(autoincrement())
+  code        String  @unique  // "ADMIN", "ESTIMATOR", "MANAGER", "VIEWER"
+  name        String
+  description String? @db.NVarChar(Max)
+  // built-in roles whose permissions are wired into the code — can be renamed but not deleted
+  isSystem    Boolean @default(false) @map("is_system")
+  roles       UserRole[]
 
   @@map("roles")
 }
@@ -416,6 +420,8 @@ model RfqCostSummary {
   quotedPricePerPc         Decimal  @map("quoted_price_per_pc")
   totalQuote               Decimal  @map("total_quote")
   aiRecommendedMarginPct   Decimal? @map("ai_recommended_margin_pct")
+  // JSON array of ExplainSection — per-row calculation trace for the cost-sheet info popovers
+  explainJson              String?  @map("explain_json") @db.NVarChar(Max)
   computedAt               DateTime @default(now()) @map("computed_at")
 
   rfqVersion               RfqVersion @relation(fields: [rfqVersionId], references: [id], onDelete: Cascade)
@@ -516,4 +522,26 @@ model SpecAnalysisItem {
   specAnalysis    SpecAnalysis @relation(fields: [specAnalysisId], references: [id], onDelete: Cascade)
 
   @@map("spec_analysis_items")
+}
+
+// ============================================================================
+// COMPANY / FIRM PROFILE (singleton — used on quotation & cost-sheet documents)
+// ============================================================================
+
+model CompanySettings {
+  id          BigInt   @id @default(autoincrement())
+  singleton   Boolean  @default(true) @unique   // guarantees at most one row
+  name        String
+  address     String?  @db.NVarChar(Max)
+  phone       String?
+  email       String?
+  website     String?
+  gstNo       String?  @map("gst_no")
+  // logo as a data URI (image/png or image/jpeg)
+  logo        String?  @db.NVarChar(Max)
+  footerNote  String?  @map("footer_note") @db.NVarChar(Max)
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  updatedBy   BigInt?  @map("updated_by")
+
+  @@map("company_settings")
 }

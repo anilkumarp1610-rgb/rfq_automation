@@ -9,7 +9,7 @@ extraction and historical lookup — **it never sets the price**. Every RFQ carr
 **versions per revision**, keyed to the **Customer Part Number**, and completed estimates
 become **historical reference data** for future RFQs.
 
-**Status:** MVP feature‑complete (phases 0–7). 22 unit tests + 20 end‑to‑end smoke checks
+**Status:** MVP feature‑complete (phases 0–7). 29 unit tests + 25 end‑to‑end smoke checks
 passing.
 
 ---
@@ -257,6 +257,12 @@ number.**
 6. **Apply** — `POST /rfq-versions/:id/spec/apply` pushes `est_net_weight_kg` →
    `part_attributes.net_weight_kg`, matches the product type, and records the material note.
 
+**Drawing files are kept per revision.** Every uploaded file is an `rfq_attachment` on that
+version and can be **downloaded** from the RFQ (`GET …/attachments/:aid/download`) or the
+Quotation panel. **Re-analyze** reuses the drawing already on file — the version's own, else
+the last one saved for that part number (copied onto the new revision); only when nothing is
+on file does it ask for an upload (`409 { needsUpload: true }`).
+
 **No API key?** With a placeholder `ANTHROPIC_API_KEY` the analyzer returns a **deterministic
 mock extraction** (clearly flagged) so the whole flow stays demoable and testable.
 `GET /customer-parts/:id/specs` returns the full versioned spec history for a part.
@@ -264,7 +270,7 @@ mock extraction** (clearly flagged) so the whole flow stays demoable and testabl
 ### 4. Deterministic cost engine
 
 - **Pure function** in `apps/api/src/cost-engine/` — no Prisma, no Express, no LLM, no clock
-  beyond a caller‑supplied `asOfDate`. Fully covered by **22 vitest unit tests**.
+  beyond a caller‑supplied `asOfDate`. Fully covered by **29 vitest unit tests**.
 - **Resolver** (`resolve.ts`) loads a version + effective‑dated masters (material price as‑of
   date, handling config with specific→global fallback, QC / overhead / margin lookup) into an
   `EngineInput`, collecting **warnings** for anything missing.
@@ -274,6 +280,11 @@ mock extraction** (clearly flagged) so the whole flow stays demoable and testabl
 - `POST /rfq-versions/:id/compute` runs the engine, upserts `rfq_cost_summary`, writes each
   line's computed `cost` back, and moves `DRAFT → COSTED`. `persist: false` computes without
   saving (live preview).
+- **Calculation trace** — the engine also returns `explain[]`: for every row of the build‑up
+  (material, handling, each process bucket, QC, admin, subtotal, margin, quoted, total) a
+  formula in words plus the substituted numbers and the sub‑total. It is stored on
+  `rfq_cost_summaries.explain_json`, and each row of the cost‑sheet table has an **info**
+  button that expands the breakdown inline (works on page load, no recompute needed).
 
 ### 5. History & reference lookup
 
@@ -294,8 +305,10 @@ mock extraction** (clearly flagged) so the whole flow stays demoable and testabl
 - Downloads (blob fetch with the auth header, so they work behind JWT):
   - `GET /rfq-versions/:id/cost-sheet.pdf` — full itemised cost sheet (pdfkit)
   - `GET /rfq-versions/:id/cost-sheet.xlsx` — the same as a formatted spreadsheet (exceljs)
-  - `GET /rfq-versions/:id/quotation.pdf` — client‑facing quote (line item, unit price, total,
-    terms, 30‑day validity)
+  - `GET /rfq-versions/:id/quotation.pdf` — client‑facing quote: company letterhead + logo,
+    Bill‑to / Part blocks, line‑item table, right‑aligned totals, and — **anchored to the
+    bottom of the page** — left‑aligned bulleted **Terms & conditions** and **Notes** with a
+    right‑aligned **Authorised Signatory** block; 30‑day validity
 - "Quotation & export" panel on the RFQ detail page with one‑click downloads.
 
 ### 7. Dashboard
@@ -317,14 +330,39 @@ and a clickable **recent‑activity** feed.
 - **Auth** — JWT (24 h); `GET /auth/me` and `POST /auth/refresh`; the SPA re‑hydrates roles
   from the server on load.
 
-### 9. Shell & UX
+### 9. Company / firm profile
+
+A single **Company Details** screen (ADMIN/MANAGER) — name, address, phone, email, website,
+GSTIN, **logo** (PNG/JPEG, ≤ 1 MB, stored as a data URI) and a quotation footer note. Exactly
+one row is ever kept (`company_settings`; `singleton` is a unique column and the seed creates
+a ready‑to‑use sample record — *Sparkline Equipments (P) Ltd*), so the screen always
+opens on that one record and `PUT /company` just updates it. The details render on the **quotation and cost-sheet PDF
+headers** (with the logo) and the company name shows in the app's top bar.
+
+### 10. Security — users & roles
+
+One **Security** screen (`/security`, ADMIN only) with a **Users / Roles** switch:
+
+- **Users** — CRUD over `Name · Contact number · Email · Password · Role`. One role per user;
+  passwords are bcrypt‑hashed (edit leaves the field blank to keep the current one). "Delete"
+  is a soft de‑activate that keeps history; you cannot deactivate your own account or the last
+  remaining active administrator.
+- **Roles** — the catalogue. The four built‑in roles (Admin, Manager, Estimator, View only)
+  have code‑wired permissions and can be **renamed / re‑described** but not re‑permissioned.
+  You can add extra roles; they behave as **view‑only** until a developer wires their `code`
+  into the middleware. **Roles cannot be deleted** (only edited).
+
+### 11. Shell & UX
 
 - **Dark / light theme** — toggled from the top-bar or the user menu; the choice is stored per
   browser and falls back to the OS preference (applied before first paint, no flash).
-- **Top bar** — app title + a **user menu** on the right (name, email, roles, theme, logout).
+- **Top bar** — company name, a theme toggle, and a **user menu** on the right (name, email, roles, logout).
 - **Collapsible navigation** — the sidebar hides / shows from the top-bar toggle; the state is
   remembered.
 - **Full-width content** — the working area (grids, cost sheets) uses the full page width.
+- **Data grids** — every browsing grid (masters, customer parts, RFQ list, audit log, similar
+  RFQs) has **click-to-sort columns** (asc → desc → off) and **pagination** (10/25/50/100 rows)
+  via a shared `DataGrid` component.
 
 ---
 
@@ -332,13 +370,22 @@ and a clickable **recent‑activity** feed.
 
 | Role | Can do |
 |---|---|
-| **ADMIN** | Everything |
-| **MANAGER** | Everything except user administration — includes master data + audit log |
-| **ESTIMATOR** | Customer parts, RFQs, spec analysis, cost sheets, quotations |
-| **VIEWER** | Read‑only |
+| **ADMIN** | Everything, including **Users** and **Roles** administration |
+| **MANAGER** | Everything except user / role administration — includes master data, company details + audit log |
+| **ESTIMATOR** | Customer parts, RFQs, spec analysis, cost sheets, quotations, cost‑sheet export |
+| **VIEWER** *(View only)* | View RFQs and **download the quotation PDF** — nothing else (no create / update / re‑generate, no masters, company, users or roles; the internal cost‑sheet export is also blocked) |
 
 Enforced by `requireRole` / `canEditMasters` (ADMIN, MANAGER) / `canEditRfq`
-(ADMIN, MANAGER, ESTIMATOR). ADMIN always passes.
+(ADMIN, MANAGER, ESTIMATOR) / `canManageUsers` (ADMIN). ADMIN always passes. The SPA mirrors
+this: the **Masters** nav + routes need `canEditMasters`, **Customer Parts** and **New RFQ**
+need `canEditRfq`, so a View‑only user sees just Dashboard, RFQs and the quotation download.
+
+The **Security** screen (`/security`, ADMIN only) has a Users / Roles switch. **Users** — full CRUD
+over `Name · Contact number · Email · Password · Role` (one role per user); delete is a soft
+de‑activate; the last active administrator cannot be demoted or deactivated. **Roles** — the
+four built‑in roles above can be **renamed and re‑described** but not re‑permissioned; you may
+add extra roles, which are treated as **view‑only** until wired into the code. Roles are never
+deleted.
 
 Default seeded admin: **`admin@rfq.local` / `Admin@123`** — change the password after first
 login. `POST /auth/register` creates an ESTIMATOR.
@@ -409,11 +456,12 @@ and port (SPA fallback for non‑API GET routes).
 
 ## Data model
 
-28 tables (Prisma models). PK = `id` (`BIGINT` identity); masters carry `is_active` +
+29 tables (Prisma models). PK = `id` (`BIGINT` identity); masters carry `is_active` +
 timestamps; effective‑dated masters carry `effective_from` / `effective_to`.
 
 ### Platform & auth
-`users` · `roles` · `user_roles` · `audit_logs`
+`users` · `roles` · `user_roles` · `audit_logs` · `company_settings` (singleton — seller
+name / address / contact / GSTIN / logo, used on the PDFs)
 
 ### Masters
 `product_types` · `material_types` · `material_categories` · `material_shapes` ·
@@ -527,7 +575,9 @@ material hierarchy — FK filters for drill‑down (`/material/categories?materi
 |---|---|---|
 | POST | `/rfq-versions/:id/attachments` | Multipart `file` — PDF or image |
 | GET | `/rfq-versions/:id/attachments` | List uploaded drawings |
-| POST | `/rfq-versions/:id/analyze-spec` | AI extraction → persist by part number (`attachmentId?`) |
+| GET | `/rfq-versions/:id/attachments/:aid/download` | Download the file (410 if missing on disk) |
+| DELETE | `/rfq-versions/:id/attachments/:aid` | Remove a drawing (canEditRfq) |
+| POST | `/rfq-versions/:id/analyze-spec` | AI extraction → persist by part number; reuses a saved drawing, else `409 { needsUpload }` |
 | GET | `/rfq-versions/:id/spec` | The saved spec (404 if none) |
 | PUT | `/rfq-versions/:id/spec` | Estimator review / correct |
 | POST | `/rfq-versions/:id/spec/apply` | Push derived data onto part attributes |
@@ -545,10 +595,14 @@ material hierarchy — FK filters for drill‑down (`/material/categories?materi
 | GET | `/rfq-versions/:id/cost-sheet.xlsx` | Cost sheet (Excel) |
 | GET | `/rfq-versions/:id/quotation.pdf` | Quotation (PDF) |
 
-### Audit
+### Audit & settings
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/audit-log` | ADMIN/MANAGER — `?entityType=` `?entityId=` `?action=` `?limit=` |
+| GET / PUT | `/company` | The singleton company / firm profile (PUT = ADMIN/MANAGER, upsert) |
+| GET / POST / PUT / DELETE | `/users` | ADMIN only — user CRUD (`name`, `email`, `phone`, `password`, `roleId`, `isActive`); DELETE de‑activates; last‑admin protected |
+| GET | `/roles` | Any authenticated user — the role catalogue (used by the user form) |
+| POST / PUT | `/roles` | ADMIN only — add a custom role, rename / re‑describe any role. Roles are never deleted (`DELETE` → 405) |
 
 ### Misc
 | Method | Path | Notes |
@@ -587,7 +641,9 @@ src/
 | `/rfqs/:id` | RFQ detail — header, revision switcher, part attributes, **Spec Analysis**, **Cost Sheet**, **Reference & similar RFQs**, **Quotation & export** |
 | `/customer-parts` | Customer Parts (config‑driven CRUD) |
 | `/masters/:group[/:tab]` | A master group (Customer / Material / Process & Machine / Costing) with tabbed sections + drill‑downs |
+| `/company` | Company / firm details (ADMIN/MANAGER) |
 | `/audit-log` | Audit Log (ADMIN/MANAGER) |
+| `/security` | **Security** — Users / Roles switch on one page, `?tab=roles` (ADMIN) |
 
 The RFQ detail page is the workbench: pick a revision, extract & review the drawing, apply the
 derived weights, build the cost sheet, compute, check comparable history, then generate the
@@ -682,7 +738,7 @@ The seed creates the two worked drawings from the plan — **P01273549** (SHAFT 
 
 ### Unit — cost engine (`apps/api/src/cost-engine/engine.test.ts`)
 
-**22 tests** covering: rounding, forged input weight, every process costing method, the
+**29 tests** covering: rounding, forged input weight, every process costing method, the
 input‑weight override, per‑kg vs per‑lot handling, all three QC modes, margin
 recommendation / adjustment / override (including the "override = 0" trap), a full worked
 build‑up with hand‑checked numbers, and a determinism check.

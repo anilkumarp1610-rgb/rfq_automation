@@ -154,8 +154,12 @@ async function main() {
   check('similar lookup', similar.status === 200 && Array.isArray(similar.data?.matches));
 
   const analyze = await api('POST', `/rfq-versions/${versionId}/analyze-spec`, {});
-  // no attachment uploaded → expect a 400
-  check('analyze without drawing is rejected', analyze.status === 400, analyze.data);
+  // no drawing anywhere for this part → 409 asking for an upload
+  check(
+    'analyze without a drawing asks for an upload',
+    analyze.status === 409 && analyze.data?.needsUpload === true,
+    analyze.data
+  );
 
   const quote = await api('POST', `/rfq-versions/${versionId}/quote`, {});
   check('generate quotation', quote.status === 200 && !!quote.data?.quotation?.quoteNo, quote.data);
@@ -174,6 +178,47 @@ async function main() {
     audit.status === 200 && audit.data.some((r) => r.action === 'QUOTE'),
     audit.status
   );
+
+  // --- Users & roles -------------------------------------------------
+  const roles = await api('GET', '/roles');
+  check(
+    'roles catalogue has the built-in roles',
+    roles.status === 200 &&
+      ['ADMIN', 'MANAGER', 'ESTIMATOR', 'VIEWER'].every((c) =>
+        roles.data.some((r) => r.code === c && r.isSystem)
+      ),
+    roles.data
+  );
+  const viewerRole = roles.data?.find((r) => r.code === 'VIEWER');
+
+  const newUser = await api('POST', '/users', {
+    name: `Smoke Viewer ${stamp}`,
+    email: `smoke.viewer.${stamp}@rfq.local`,
+    phone: '99999',
+    password: 'Viewer@123',
+    roleId: String(viewerRole.id),
+  });
+  check('create a view-only user', newUser.status === 201 && newUser.data?.role?.code === 'VIEWER', newUser.data);
+
+  const viewerLogin = await api('POST', '/auth/login', {
+    email: `smoke.viewer.${stamp}@rfq.local`,
+    password: 'Viewer@123',
+  });
+  const viewerToken = viewerLogin.data?.token;
+  const savedToken = token;
+  token = viewerToken;
+  check(
+    'view-only user is blocked from editing masters and RFQs',
+    (await api('POST', '/customers', { code: `V${stamp}`, name: 'x', rating: 3 })).status === 403 &&
+      (await api('POST', '/users', {})).status === 403
+  );
+  token = savedToken;
+
+  const deactivated = await api('DELETE', `/users/${newUser.data.id}`);
+  check('deactivate the user', deactivated.status === 204);
+
+  const roleDelete = await api('DELETE', `/roles/${viewerRole.id}`);
+  check('roles cannot be deleted', roleDelete.status === 405, roleDelete.data);
 
   finish();
 }

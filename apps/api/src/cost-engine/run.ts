@@ -19,6 +19,7 @@ function summaryToRow(s: CostSummary) {
     quotedPricePerPc: s.quotedPricePerPc,
     totalQuote: s.totalQuote,
     aiRecommendedMarginPct: s.aiRecommendedMarginPct,
+    explainJson: JSON.stringify(s.explain),
     computedAt: new Date(),
   };
 }

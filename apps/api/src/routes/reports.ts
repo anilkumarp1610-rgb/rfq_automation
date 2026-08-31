@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticateToken, AuthRequest } from '../middleware/auth.js';
+import { authenticateToken, canEditRfq, AuthRequest } from '../middleware/auth.js';
 import { ah, bigIntParam } from '../lib/http.js';
 import { dashboardSummary } from '../reports/dashboard.js';
 import { costSheetViewModel } from '../reports/costSheet.js';
@@ -28,8 +28,10 @@ function sendFile(res: Response, buf: Buffer, mime: string, filename: string) {
   res.end(buf);
 }
 
+// The internal cost sheet is not for view-only users — they get the quotation only.
 downloadRouter.get(
   '/:id/cost-sheet.pdf',
+  canEditRfq,
   ah(async (req: AuthRequest, res: Response) => {
     const vm = await costSheetViewModel(bigIntParam(req.params.id));
     sendFile(res, await costSheetPdf(vm), 'application/pdf', `cost-sheet-${vm.quoteNo}.pdf`);
@@ -38,6 +40,7 @@ downloadRouter.get(
 
 downloadRouter.get(
   '/:id/cost-sheet.xlsx',
+  canEditRfq,
   ah(async (req: AuthRequest, res: Response) => {
     const vm = await costSheetViewModel(bigIntParam(req.params.id));
     sendFile(

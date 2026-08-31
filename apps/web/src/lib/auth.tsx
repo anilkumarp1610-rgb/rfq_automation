@@ -15,6 +15,7 @@ interface AuthState {
   canEditMasters: boolean
   canEditRfq: boolean
   isAdminOrManager: boolean
+  isAdmin: boolean
 }
 
 const AuthContext = createContext<AuthState | undefined>(undefined)
@@ -68,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         canEditMasters: has('ADMIN', 'MANAGER'),
         canEditRfq: has('ADMIN', 'MANAGER', 'ESTIMATOR'),
         isAdminOrManager: has('ADMIN', 'MANAGER'),
+        isAdmin: has('ADMIN'),
       }}
     >
       {children}

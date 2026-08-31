@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Upload, Trash2, Plus, RefreshCw, Check } from 'lucide-react'
+import { Upload, Trash2, Plus, RefreshCw, Check, Download, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { SPEC_ITEM_TYPES } from '@rfq/shared'
-import { apiClient, apiError } from '@/lib/api'
+import { apiClient, apiError, downloadFile } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -128,7 +128,14 @@ export default function SpecAnalysis({
       toast.success(data.mock ? 'Re-analyzed (mock)' : 'Re-analyzed')
       invalidate()
     },
-    onError: (e) => toast.error(apiError(e)),
+    onError: (e: any) => {
+      if (e?.response?.data?.needsUpload) {
+        toast.info('No drawing on file for this revision — pick one to analyze')
+        fileRef.current?.click()
+      } else {
+        toast.error(apiError(e))
+      }
+    },
   })
 
   const save = useMutation({
@@ -215,11 +222,12 @@ export default function SpecAnalysis({
               {uploadAndAnalyze.isPending ? 'Analyzing…' : 'Upload & analyze drawing'}
             </Button>
           )}
-          {attachments.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {attachments.length} file(s) uploaded — {attachments[0].fileName}
-            </p>
-          )}
+          <AttachmentList
+            versionId={versionId}
+            attachments={attachments}
+            canEdit={canEdit}
+            onChanged={() => qc.invalidateQueries({ queryKey: ['spec-attachments', versionId] })}
+          />
         </CardContent>
       </Card>
     )
@@ -252,6 +260,17 @@ export default function SpecAnalysis({
         )}
       </CardHeader>
       <CardContent className="space-y-4">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,image/*"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0]
+            if (f) uploadAndAnalyze.mutate(f)
+            e.target.value = ''
+          }}
+        />
         {flags.length > 0 && (
           <ul className="text-xs text-amber-700 bg-amber-50 rounded-md p-3 space-y-1">
             {flags.map((f, i) => (
@@ -259,6 +278,19 @@ export default function SpecAnalysis({
             ))}
           </ul>
         )}
+
+        <AttachmentList
+          versionId={versionId}
+          attachments={attachments}
+          analyzedId={spec.attachment?.id ? String(spec.attachment.id) : spec.attachmentId ? String(spec.attachmentId) : undefined}
+          canEdit={canEdit}
+          onChanged={() => {
+            qc.invalidateQueries({ queryKey: ['spec-attachments', versionId] })
+            invalidate()
+          }}
+          onUpload={canEdit ? (file) => uploadAndAnalyze.mutate(file) : undefined}
+          uploading={uploadAndAnalyze.isPending}
+        />
 
         {/* Header fields */}
         <div className="grid gap-3 md:grid-cols-3">
@@ -379,5 +411,107 @@ export default function SpecAnalysis({
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function AttachmentList({
+  versionId,
+  attachments,
+  analyzedId,
+  canEdit,
+  onChanged,
+  onUpload,
+  uploading,
+}: {
+  versionId: string
+  attachments: Row[]
+  analyzedId?: string
+  canEdit: boolean
+  onChanged: () => void
+  onUpload?: (file: File) => void
+  uploading?: boolean
+}) {
+  const addRef = useRef<HTMLInputElement>(null)
+
+  const remove = useMutation({
+    mutationFn: (id: string) =>
+      apiClient.delete(`/rfq-versions/${versionId}/attachments/${id}`).then((r) => r.data),
+    onSuccess: () => {
+      toast.success('File removed')
+      onChanged()
+    },
+    onError: (e) => toast.error(apiError(e)),
+  })
+
+  return (
+    <div className="rounded-md border bg-muted/30 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-muted-foreground">
+          Drawing / spec files ({attachments.length})
+        </span>
+        {onUpload && (
+          <>
+            <input
+              ref={addRef}
+              type="file"
+              accept=".pdf,image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) onUpload(f)
+                e.target.value = ''
+              }}
+            />
+            <Button size="sm" variant="outline" onClick={() => addRef.current?.click()} disabled={uploading}>
+              <Upload className="h-3.5 w-3.5 mr-1" /> {uploading ? 'Analyzing…' : 'Upload & re-analyze'}
+            </Button>
+          </>
+        )}
+      </div>
+
+      {attachments.length === 0 ? (
+        <p className="text-xs text-muted-foreground">No files uploaded for this revision yet.</p>
+      ) : (
+        <ul className="divide-y divide-border">
+          {attachments.map((a) => (
+            <li key={a.id} className="flex items-center gap-2 py-1.5 text-sm">
+              <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+              <span className="truncate">{a.fileName}</span>
+              {analyzedId && String(a.id) === analyzedId && (
+                <Badge variant="secondary">analyzed</Badge>
+              )}
+              <span className="text-xs text-muted-foreground ml-auto whitespace-nowrap">
+                {a.uploadedAt ? String(a.uploadedAt).slice(0, 10) : ''}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="Download"
+                onClick={() =>
+                  downloadFile(
+                    `/rfq-versions/${versionId}/attachments/${a.id}/download`,
+                    a.fileName
+                  ).catch((e) => toast.error(apiError(e)))
+                }
+              >
+                <Download className="h-4 w-4" />
+              </Button>
+              {canEdit && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  title="Remove"
+                  onClick={() => {
+                    if (confirm(`Remove "${a.fileName}"?`)) remove.mutate(String(a.id))
+                  }}
+                >
+                  <Trash2 className="h-4 w-4 text-red-500" />
+                </Button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }

@@ -106,6 +106,25 @@ export interface EngineProcessResult extends EngineProcessLine {
   cost: number;
 }
 
+/** One "how was this number reached" line inside an {@link ExplainSection}. */
+export interface ExplainStep {
+  label: string;
+  /** already formatted for display — "₹49.50", "0.55 kg", "18%" */
+  value?: string;
+  note?: string;
+}
+
+/** The calculation behind one row of the cost summary, for the UI info popover. */
+export interface ExplainSection {
+  /** matches the summary row: material · handling · machining · manual · subcontract · qc · mfg · admin · subtotal · margin · quoted · total */
+  key: string;
+  title: string;
+  /** the formula in words, e.g. "input wt × (1 + wastage%) × rate/kg" */
+  formula: string;
+  steps: ExplainStep[];
+  result: number;
+}
+
 export interface CostSummary {
   inputWeightKg: number;
   materialCost: number;
@@ -125,4 +144,6 @@ export interface CostSummary {
   quotedPricePerPc: number;
   totalQuote: number;
   processes: EngineProcessResult[];
+  /** per-section calculation trace — powers the "info" popovers on the cost sheet */
+  explain: ExplainSection[];
 }

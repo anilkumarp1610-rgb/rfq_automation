@@ -80,6 +80,114 @@ router.get(
   })
 );
 
+// --- Download the uploaded drawing / spec file --------------------------
+router.get(
+  '/:id/attachments/:attachmentId/download',
+  ah(async (req: AuthRequest, res: Response) => {
+    const att = await prisma.rfqAttachment.findFirst({
+      where: {
+        id: bigIntParam(req.params.attachmentId),
+        rfqVersionId: bigIntParam(req.params.id),
+      },
+    });
+    if (!att) notFound('Attachment');
+    let buf: Buffer;
+    try {
+      buf = await fs.readFile(att!.path);
+    } catch {
+      return res.status(410).json({ error: 'The uploaded file is no longer on disk' });
+    }
+    res.setHeader('Content-Type', att!.mime || 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${att!.fileName.replace(/["\r\n]/g, '')}"`
+    );
+    res.setHeader('Content-Length', buf.length);
+    res.end(buf);
+  })
+);
+
+router.delete(
+  '/:id/attachments/:attachmentId',
+  canEditRfq,
+  ah(async (req: AuthRequest, res: Response) => {
+    const versionId = bigIntParam(req.params.id);
+    const attId = bigIntParam(req.params.attachmentId);
+    const att = await prisma.rfqAttachment.findFirst({
+      where: { id: attId, rfqVersionId: versionId },
+    });
+    if (!att) notFound('Attachment');
+    // detach from any spec_analysis first (FK is NoAction)
+    await prisma.specAnalysis.updateMany({
+      where: { attachmentId: attId },
+      data: { attachmentId: null },
+    });
+    await prisma.rfqAttachment.delete({ where: { id: attId } });
+    await fs.unlink(att!.path).catch(() => {});
+    await audit(req, { entityType: 'RfqAttachment', entityId: attId, action: 'DELETE' });
+    res.status(204).end();
+  })
+);
+
+/** A file on disk + the RfqAttachment row for THIS version pointing at it. */
+async function fileExists(p: string) {
+  try {
+    await fs.access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Find a drawing to (re)analyze for a version:
+ *   1. an explicit / this-version attachment whose file is on disk
+ *   2. otherwise the last drawing saved for the same part number (this revision's
+ *      spec, or any sibling RFQ version) — copied onto this version so it stays
+ *      downloadable here
+ *   3. otherwise → `{ needsUpload: true }`
+ */
+async function resolveDrawing(
+  version: Awaited<ReturnType<typeof loadVersionCtx>>['version'],
+  part: { id: bigint },
+  revision: string,
+  explicitAttachmentId: bigint | null
+): Promise<{ attachment: { id: bigint; path: string; mime: string; fileName: string } } | { needsUpload: true }> {
+  const own = explicitAttachmentId
+    ? version.attachments.find((a) => a.id === explicitAttachmentId)
+    : version.attachments[0];
+  if (own && (await fileExists(own.path))) return { attachment: own };
+
+  // Candidates saved for the same part number, most recent first.
+  const spec = await prisma.specAnalysis.findUnique({
+    where: { customerPartId_revision: { customerPartId: part.id, revision } },
+  });
+  const candidates = await prisma.rfqAttachment.findMany({
+    where: {
+      OR: [
+        spec?.attachmentId ? { id: spec.attachmentId } : {},
+        { rfqVersion: { rfq: { customerPartId: part.id } } },
+      ].filter((c) => Object.keys(c).length),
+    },
+    orderBy: { uploadedAt: 'desc' },
+  });
+  for (const c of candidates) {
+    if (c.id === own?.id) continue;
+    if (!(await fileExists(c.path))) continue;
+    const dest = path.join(
+      UPLOAD_DIR,
+      `${Date.now()}-${c.fileName.replace(/[^\w.\-]+/g, '_')}`
+    );
+    await fs.copyFile(c.path, dest);
+    const copied = await prisma.rfqAttachment.create({
+      data: { rfqVersionId: version.id, fileName: c.fileName, path: dest, mime: c.mime },
+    });
+    return { attachment: copied };
+  }
+
+  return { needsUpload: true };
+}
+
 // --- Analyze: PDF → structured spec data → save by part number ------------
 router.post(
   '/:id/analyze-spec',
@@ -88,20 +196,27 @@ router.post(
     const id = bigIntParam(req.params.id);
     const { version, part, revision } = await loadVersionCtx(id);
 
-    const attachmentId = req.body?.attachmentId ? BigInt(req.body.attachmentId) : null;
-    const attachment = attachmentId
-      ? version.attachments.find((a) => a.id === attachmentId)
-      : version.attachments[0];
-    if (!attachment) badRequest('Upload a drawing first (POST /rfq-versions/:id/attachments)');
+    const explicit = req.body?.attachmentId ? BigInt(req.body.attachmentId) : null;
+    const resolved = await resolveDrawing(version, part, revision, explicit);
+    if ('needsUpload' in resolved) {
+      return res.status(409).json({
+        needsUpload: true,
+        error: 'No drawing on file for this revision — upload one to analyze',
+      });
+    }
+    const attachment = resolved.attachment;
 
     let buffer: Buffer;
     try {
-      buffer = await fs.readFile(attachment!.path);
+      buffer = await fs.readFile(attachment.path);
     } catch {
-      badRequest('Uploaded file is missing on disk — re-upload the drawing', 410);
+      return res.status(410).json({
+        needsUpload: true,
+        error: 'The drawing file is missing on disk — upload it again',
+      });
     }
 
-    const extract = await analyzeDrawing(buffer!, attachment!.mime, {
+    const extract = await analyzeDrawing(buffer, attachment.mime, {
       partNumber: part.customerPartNumber,
       revision,
     });
@@ -119,7 +234,7 @@ router.post(
     const spec = await persistSpec({
       customerPartId: part.id,
       rfqVersionId: id,
-      attachmentId: attachment!.id,
+      attachmentId: attachment.id,
       revision,
       extract,
       weights,

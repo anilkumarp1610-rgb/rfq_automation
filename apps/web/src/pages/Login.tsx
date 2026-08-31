@@ -27,7 +27,7 @@ export default function LoginPage() {
     formState: { errors },
   } = useForm<LoginForm>({
     resolver: zodResolver(loginSchema),
-    defaultValues: { email: 'admin@rfq.local', password: 'Admin@123' },
+    defaultValues: { email: '', password: '' },
   })
 
   const onSubmit = async (data: LoginForm) => {
@@ -67,9 +67,6 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? 'Signing in…' : 'Sign in'}
             </Button>
-            <p className="text-xs text-center text-muted-foreground">
-              Demo: admin@rfq.local / Admin@123
-            </p>
           </form>
         </CardContent>
       </Card>

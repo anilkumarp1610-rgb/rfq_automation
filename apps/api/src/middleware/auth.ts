@@ -46,3 +46,6 @@ export const canEditMasters = requireRole('ADMIN', 'MANAGER');
 
 /** Roles allowed to work on RFQs / estimates. */
 export const canEditRfq = requireRole('ADMIN', 'MANAGER', 'ESTIMATOR');
+
+/** Only administrators manage users and roles. */
+export const canManageUsers = requireRole('ADMIN');

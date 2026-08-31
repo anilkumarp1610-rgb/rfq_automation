@@ -9,14 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, Textarea } from '@/components/ui/field'
 import { Badge } from '@/components/ui/badge'
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table'
+import DataGrid, { type GridColumn } from '@/components/DataGrid'
 import {
   Dialog,
   DialogContent,
@@ -165,7 +158,40 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
   const rows = (listQuery.data as Row[]) ?? []
   const drilldowns = config.drilldowns ?? []
   const hasActions = canEdit || (drilldowns.length > 0 && !!onDrill)
-  const colSpan = tableFields.length + 1 + (hasActions ? 1 : 0)
+
+  const gridColumns: GridColumn<Row>[] = [
+    ...tableFields.map((f) => ({
+      key: f.name,
+      header: f.label,
+      cell: (row: Row) => renderCell(f, row),
+      sortValue: (row: Row) => {
+        const v = row[f.name]
+        if (f.type === 'select' && f.optionsResource && f.optionLabel) {
+          const opt = optionsByResource[f.optionsResource]?.find((o) => String(o.id) === String(v))
+          return opt ? f.optionLabel(opt) : v
+        }
+        if (f.cell && (v === undefined || v === null)) {
+          const c = f.cell(row)
+          return typeof c === 'string' || typeof c === 'number' ? c : ''
+        }
+        return v
+      },
+    })),
+    {
+      key: '_status',
+      header: 'Status',
+      className: 'w-24',
+      sortValue: (row: Row) => (row.isActive === false ? 1 : 0),
+      cell: (row: Row) =>
+        row.isActive === undefined ? (
+          '—'
+        ) : row.isActive === false ? (
+          <Badge variant="destructive">Inactive</Badge>
+        ) : (
+          <Badge variant="success">Active</Badge>
+        ),
+    },
+  ]
 
   return (
     <div className="space-y-4">
@@ -181,96 +207,63 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
         )}
       </div>
 
-      {config.searchable && (
-        <div className="relative max-w-xs">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="pl-8"
-            placeholder="Search…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-        </div>
-      )}
-
-      <div className="rounded-lg border bg-card">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {tableFields.map((f) => (
-                <TableHead key={f.name}>{f.label}</TableHead>
-              ))}
-              <TableHead className="w-24">Status</TableHead>
-              {hasActions && <TableHead className="w-32 text-right">Actions</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {listQuery.isLoading ? (
-              <TableRow>
-                <TableCell colSpan={colSpan}>Loading…</TableCell>
-              </TableRow>
-            ) : rows.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={colSpan} className="text-muted-foreground">
-                  No records.
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => (
-                <TableRow key={String(row.id)}>
-                  {tableFields.map((f) => (
-                    <TableCell key={f.name}>{renderCell(f, row)}</TableCell>
-                  ))}
-                  <TableCell>
-                    {row.isActive === undefined ? (
-                      '—'
-                    ) : row.isActive === false ? (
-                      <Badge variant="destructive">Inactive</Badge>
-                    ) : (
-                      <Badge variant="success">Active</Badge>
-                    )}
-                  </TableCell>
-                  {hasActions && (
-                    <TableCell className="text-right whitespace-nowrap">
-                      {onDrill &&
-                        drilldowns.map((dd) => (
-                          <Button
-                            key={dd.tab}
-                            variant="ghost"
-                            size="sm"
-                            className="text-primary"
-                            onClick={() => onDrill(dd, row)}
-                          >
-                            {dd.label} <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
-                          </Button>
-                        ))}
-                      {canEdit && (
-                        <>
-                          <Button variant="ghost" size="icon" onClick={() => openForm(row)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          {!config.hideDelete && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                if (confirm('Delete this record?'))
-                                  deleteMutation.mutate(String(row.id))
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4 text-red-500" />
-                            </Button>
-                          )}
-                        </>
+      <DataGrid
+        columns={gridColumns}
+        rows={rows}
+        getRowKey={(row) => String(row.id)}
+        loading={listQuery.isLoading}
+        toolbar={
+          config.searchable ? (
+            <div className="relative max-w-xs">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                className="pl-8"
+                placeholder="Search…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+          ) : undefined
+        }
+        actions={
+          hasActions
+            ? (row) => (
+                <>
+                  {onDrill &&
+                    drilldowns.map((dd) => (
+                      <Button
+                        key={dd.tab}
+                        variant="ghost"
+                        size="sm"
+                        className="text-primary"
+                        onClick={() => onDrill(dd, row)}
+                      >
+                        {dd.label} <ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                      </Button>
+                    ))}
+                  {canEdit && (
+                    <>
+                      <Button variant="ghost" size="icon" onClick={() => openForm(row)}>
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      {!config.hideDelete && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            if (confirm('Delete this record?')) deleteMutation.mutate(String(row.id))
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 text-red-500" />
+                        </Button>
                       )}
-                    </TableCell>
+                    </>
                   )}
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+                </>
+              )
+            : undefined
+        }
+      />
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

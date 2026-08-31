@@ -1,5 +1,6 @@
 import { prisma } from '../lib/prisma.js';
 import { notFound } from '../lib/http.js';
+import { getCompanySettings } from '../lib/company.js';
 
 const n = (v: unknown): number => {
   const x = Number(v);
@@ -14,6 +15,16 @@ export interface CostSheetLine {
 }
 
 export interface CostSheetVM {
+  company: {
+    name: string;
+    address: string | null;
+    phone: string | null;
+    email: string | null;
+    website: string | null;
+    gstNo: string | null;
+    logo: string | null;
+    footerNote: string | null;
+  } | null;
   quoteNo: string;
   rfqNumber: string;
   revisionNo: number;
@@ -61,6 +72,7 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
   const rfq = v!.rfq;
   const part = rfq.customerPart;
   const cust = part.customer;
+  const co = await getCompanySettings();
   const now = new Date();
   const plus30 = new Date(now.getTime() + 30 * 864e5);
   const matLine = v!.materials[0];
@@ -106,6 +118,18 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
   ];
 
   return {
+    company: co
+      ? {
+          name: co.name,
+          address: co.address ?? null,
+          phone: co.phone ?? null,
+          email: co.email ?? null,
+          website: co.website ?? null,
+          gstNo: co.gstNo ?? null,
+          logo: co.logo ?? null,
+          footerNote: co.footerNote ?? null,
+        }
+      : null,
     quoteNo: `${rfq.rfqNumber}-R${v!.revisionNo}`,
     rfqNumber: rfq.rfqNumber,
     revisionNo: v!.revisionNo,
@@ -134,7 +158,16 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
     material: {
       grade: matCat?.gradeCode ?? null,
       shape: matShape?.name ?? null,
-      inputWeightKg: matLine ? n(matLine.inputWeightKg) : null,
+      inputWeightKg: matLine
+        ? n(matLine.inputWeightKg)
+        : v!.partAttributes?.netWeightKg
+          ? Number(
+              (
+                n(v!.partAttributes.netWeightKg) *
+                (1 + n(v!.partAttributes.forgiveLossPct) / 100)
+              ).toFixed(4)
+            )
+          : null,
       ratePerKg: matLine ? n(matLine.ratePerKg) : null,
     },
     processes: v!.processes.map((p) => ({
@@ -151,6 +184,8 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
     totalQuote: n(s.totalQuote),
     marginPct: n(s.marginPct),
     recommendedMarginPct: s.aiRecommendedMarginPct != null ? n(s.aiRecommendedMarginPct) : null,
-    computedAt: s.computedAt ? new Date(s.computedAt).toISOString() : null,
+    computedAt: s.computedAt
+      ? new Date(s.computedAt).toISOString().slice(0, 16).replace('T', ' ')
+      : null,
   };
 }

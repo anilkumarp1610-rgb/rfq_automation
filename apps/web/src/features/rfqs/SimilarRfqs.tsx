@@ -5,14 +5,7 @@ import { apiClient, apiError } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import {
-  Table,
-  TableHeader,
-  TableBody,
-  TableRow,
-  TableHead,
-  TableCell,
-} from '@/components/ui/table'
+import DataGrid, { type GridColumn } from '@/components/DataGrid'
 import { StatusBadge } from './StatusBadge'
 
 const money = (n: any) =>
@@ -124,58 +117,74 @@ export default function SimilarRfqs({
             No comparable historical RFQs yet — they appear here as more parts are quoted.
           </p>
         ) : (
-          <div className="rounded-lg border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Match</TableHead>
-                  <TableHead>RFQ / part</TableHead>
-                  <TableHead>Customer</TableHead>
-                  <TableHead>Type · grade</TableHead>
-                  <TableHead>Key dims</TableHead>
-                  <TableHead>Quoted /pc</TableHead>
-                  <TableHead>Actual /pc</TableHead>
-                  <TableHead>Outcome</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {matches.map((m) => (
-                  <TableRow key={m.referenceId}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="h-1.5 w-12 rounded bg-slate-200">
-                          <div
-                            className="h-1.5 rounded bg-primary"
-                            style={{ width: `${Math.round((m.score / maxScore) * 100)}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-muted-foreground">{m.score.toFixed(1)}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-medium">{m.rfqNumber}</span> R{m.revisionNo}
-                      <div className="text-xs text-muted-foreground">
-                        {m.customerPartNumber} · {m.partName}
-                      </div>
-                    </TableCell>
-                    <TableCell>{m.customerCode ?? '—'}</TableCell>
-                    <TableCell>
-                      {m.productType ?? '—'}
-                      {m.materialGrade ? ` · ${m.materialGrade}` : ''}
-                    </TableCell>
-                    <TableCell className="text-xs">{dims(m.keyDims)}</TableCell>
-                    <TableCell>{money(m.quotedPricePerPc)}</TableCell>
-                    <TableCell>{money(m.actualCost)}</TableCell>
-                    <TableCell>
-                      <StatusBadge status={m.outcome} />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
+          <DataGrid
+            columns={similarColumns(maxScore)}
+            rows={matches}
+            getRowKey={(m: any) => String(m.referenceId)}
+            pageSize={10}
+          />
         )}
       </CardContent>
     </Card>
   )
+}
+
+function similarColumns(maxScore: number): GridColumn<any>[] {
+  return [
+    {
+      key: 'score',
+      header: 'Match',
+      sortValue: (m) => m.score,
+      cell: (m) => (
+        <div className="flex items-center gap-2">
+          <div className="h-1.5 w-12 rounded bg-muted">
+            <div
+              className="h-1.5 rounded bg-primary"
+              style={{ width: `${Math.round((m.score / maxScore) * 100)}%` }}
+            />
+          </div>
+          <span className="text-xs text-muted-foreground">{m.score.toFixed(1)}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'rfqNumber',
+      header: 'RFQ / part',
+      cell: (m) => (
+        <>
+          <span className="font-medium">{m.rfqNumber}</span> R{m.revisionNo}
+          <div className="text-xs text-muted-foreground">
+            {m.customerPartNumber} · {m.partName}
+          </div>
+        </>
+      ),
+    },
+    { key: 'customerCode', header: 'Customer', cell: (m) => m.customerCode ?? '—' },
+    {
+      key: 'productType',
+      header: 'Type · grade',
+      cell: (m) => `${m.productType ?? '—'}${m.materialGrade ? ` · ${m.materialGrade}` : ''}`,
+    },
+    {
+      key: 'dims',
+      header: 'Key dims',
+      noSort: true,
+      cell: (m) => <span className="text-xs">{dims(m.keyDims)}</span>,
+    },
+    {
+      key: 'quotedPricePerPc',
+      header: 'Quoted /pc',
+      align: 'right',
+      sortValue: (m) => Number(m.quotedPricePerPc ?? -1),
+      cell: (m) => money(m.quotedPricePerPc),
+    },
+    {
+      key: 'actualCost',
+      header: 'Actual /pc',
+      align: 'right',
+      sortValue: (m) => Number(m.actualCost ?? -1),
+      cell: (m) => money(m.actualCost),
+    },
+    { key: 'outcome', header: 'Outcome', cell: (m) => <StatusBadge status={m.outcome} /> },
+  ]
 }

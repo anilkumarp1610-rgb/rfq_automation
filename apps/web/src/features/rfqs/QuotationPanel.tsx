@@ -1,5 +1,5 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileDown, FileSpreadsheet, FileText, Check } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { FileDown, FileSpreadsheet, FileText, Check, Paperclip } from 'lucide-react'
 import { toast } from 'sonner'
 import { apiClient, apiError, downloadFile } from '@/lib/api'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,12 @@ export default function QuotationPanel({
   onChanged: () => void
 }) {
   const qc = useQueryClient()
+
+  const attachments = useQuery({
+    queryKey: ['spec-attachments', versionId],
+    queryFn: () => apiClient.get(`/rfq-versions/${versionId}/attachments`).then((r) => r.data),
+  })
+  const drawing = ((attachments.data as any[]) ?? [])[0]
 
   const generate = useMutation({
     mutationFn: () => apiClient.post(`/rfq-versions/${versionId}/quote`, {}).then((r) => r.data),
@@ -53,15 +59,32 @@ export default function QuotationPanel({
                 : 'Generate quotation'}
             </Button>
           )}
-          <Button variant="outline" disabled={!hasCost} onClick={() => dl('cost-sheet.pdf', `cost-sheet-${quoteNo}.pdf`)}>
-            <FileText className="h-4 w-4 mr-1" /> Cost sheet (PDF)
-          </Button>
-          <Button variant="outline" disabled={!hasCost} onClick={() => dl('cost-sheet.xlsx', `cost-sheet-${quoteNo}.xlsx`)}>
-            <FileSpreadsheet className="h-4 w-4 mr-1" /> Cost sheet (Excel)
-          </Button>
+          {canEdit && (
+            <>
+              <Button variant="outline" disabled={!hasCost} onClick={() => dl('cost-sheet.pdf', `cost-sheet-${quoteNo}.pdf`)}>
+                <FileText className="h-4 w-4 mr-1" /> Cost sheet (PDF)
+              </Button>
+              <Button variant="outline" disabled={!hasCost} onClick={() => dl('cost-sheet.xlsx', `cost-sheet-${quoteNo}.xlsx`)}>
+                <FileSpreadsheet className="h-4 w-4 mr-1" /> Cost sheet (Excel)
+              </Button>
+            </>
+          )}
           <Button variant="outline" disabled={!hasCost} onClick={() => dl('quotation.pdf', `quotation-${quoteNo}.pdf`)}>
             <FileDown className="h-4 w-4 mr-1" /> Quotation (PDF)
           </Button>
+          {drawing && (
+            <Button
+              variant="outline"
+              onClick={() =>
+                downloadFile(
+                  `/rfq-versions/${versionId}/attachments/${drawing.id}/download`,
+                  drawing.fileName
+                ).catch((e) => toast.error(apiError(e)))
+              }
+            >
+              <Paperclip className="h-4 w-4 mr-1" /> Drawing
+            </Button>
+          )}
         </div>
         {hasCost && <p className="text-xs text-muted-foreground">Quote no. {quoteNo}</p>}
       </CardContent>

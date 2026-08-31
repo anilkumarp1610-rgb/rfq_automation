@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Calculator } from 'lucide-react'
+import { Plus, Trash2, Calculator, Info } from 'lucide-react'
 import { toast } from 'sonner'
 import { COSTING_METHODS } from '@rfq/shared'
 import { resource, apiError, apiClient } from '@/lib/api'
@@ -79,6 +79,7 @@ export default function CostSheet({
   })
   const [margin, setMargin] = useState({ marginAdjustmentPct: '', marginOverridePct: '', quantity: '' })
   const [result, setResult] = useState<any>(null)
+  const [openRow, setOpenRow] = useState<string | null>(null)
 
   useEffect(() => {
     if (!version) return
@@ -380,35 +381,91 @@ export default function CostSheet({
             <div className="rounded-lg border">
               <Table>
                 <TableBody>
-                  {[
-                    ['Material', summary.materialCost],
-                    ['Handling', summary.handlingCost],
-                    ['Machining', summary.machiningCost],
-                    ['Manual', summary.manualCost],
-                    ['Subcontract', summary.subcontractCost],
-                    ['QC (auto)', summary.qcCost],
-                    ['Manufacturing cost', summary.mfgCost, true],
-                    ['Administration', summary.adminCost],
-                    ['Subtotal', summary.subtotal, true],
+                  {(
                     [
-                      `Margin (${summary.marginPct}%${
-                        summary.aiRecommendedMarginPct != null &&
-                        Number(summary.aiRecommendedMarginPct) !== Number(summary.marginPct)
-                          ? `, rec. ${summary.aiRecommendedMarginPct}%`
-                          : ''
-                      })`,
-                      summary.marginAmount,
-                    ],
-                    ['Quoted price / pc', summary.quotedPricePerPc, true],
-                    ['Total quote', summary.totalQuote, true],
-                  ].map(([label, value, strong]: any) => (
-                    <TableRow key={label}>
-                      <TableCell className={strong ? 'font-semibold' : ''}>{label}</TableCell>
-                      <TableCell className={`text-right ${strong ? 'font-semibold' : ''}`}>
-                        {money(value)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                      ['Material', summary.materialCost, false, 'material'],
+                      ['Handling', summary.handlingCost, false, 'handling'],
+                      ['Machining', summary.machiningCost, false, 'machining'],
+                      ['Manual', summary.manualCost, false, 'manual'],
+                      ['Subcontract', summary.subcontractCost, false, 'subcontract'],
+                      ['QC (auto)', summary.qcCost, false, 'qc'],
+                      ['Manufacturing cost', summary.mfgCost, true, 'mfg'],
+                      ['Administration', summary.adminCost, false, 'admin'],
+                      ['Subtotal', summary.subtotal, true, 'subtotal'],
+                      [
+                        `Margin (${summary.marginPct}%${
+                          summary.aiRecommendedMarginPct != null &&
+                          Number(summary.aiRecommendedMarginPct) !== Number(summary.marginPct)
+                            ? `, rec. ${summary.aiRecommendedMarginPct}%`
+                            : ''
+                        })`,
+                        summary.marginAmount,
+                        false,
+                        'margin',
+                      ],
+                      ['Quoted price / pc', summary.quotedPricePerPc, true, 'quoted'],
+                      ['Total quote', summary.totalQuote, true, 'total'],
+                    ] as [string, any, boolean, string][]
+                  ).map(([label, value, strong, key]) => {
+                    const section = explainOf(summary, key)
+                    const open = openRow === key
+                    return (
+                      <Fragment key={key}>
+                        <TableRow>
+                          <TableCell className={strong ? 'font-semibold' : ''}>
+                            <span className="inline-flex items-center gap-1.5">
+                              {label}
+                              {section && (
+                                <button
+                                  type="button"
+                                  aria-label={`How ${label} is calculated`}
+                                  className="text-muted-foreground hover:text-foreground"
+                                  onClick={() => setOpenRow(open ? null : key)}
+                                >
+                                  <Info className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </span>
+                          </TableCell>
+                          <TableCell className={`text-right ${strong ? 'font-semibold' : ''}`}>
+                            {money(value)}
+                          </TableCell>
+                        </TableRow>
+                        {open && section && (
+                          <TableRow className="bg-muted/40 hover:bg-muted/40">
+                            <TableCell colSpan={2} className="py-3">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                {section.formula}
+                              </p>
+                              <table className="mt-2 w-full text-xs">
+                                <tbody>
+                                  {section.steps.map((s: any, i: number) => (
+                                    <tr key={i}>
+                                      <td className="py-0.5 pr-3 align-top">
+                                        {s.label}
+                                        {s.note && (
+                                          <span className="text-muted-foreground"> — {s.note}</span>
+                                        )}
+                                      </td>
+                                      <td className="py-0.5 text-right whitespace-nowrap tabular-nums">
+                                        {s.value ?? ''}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  <tr className="border-t font-medium">
+                                    <td className="pt-1">{section.title}</td>
+                                    <td className="pt-1 text-right whitespace-nowrap tabular-nums">
+                                      {money(section.result)}
+                                    </td>
+                                  </tr>
+                                </tbody>
+                              </table>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </Fragment>
+                    )
+                  })}
                 </TableBody>
               </Table>
             </div>
@@ -443,4 +500,18 @@ function putJson(path: string, body: unknown) {
   return apiClient.put(path, body).then((r) => r.data)
 }
 
-const deriveSummary = (cs: any) => cs ?? null
+/** Normalise a persisted cost-summary row so it carries a parsed `explain` array. */
+const deriveSummary = (cs: any) => {
+  if (!cs) return null
+  if (Array.isArray(cs.explain)) return cs
+  let explain: any[] = []
+  try {
+    if (typeof cs.explainJson === 'string') explain = JSON.parse(cs.explainJson)
+  } catch {
+    /* stale / malformed — just omit the popovers */
+  }
+  return { ...cs, explain }
+}
+
+const explainOf = (summary: any, key: string) =>
+  (summary?.explain as any[] | undefined)?.find((s) => s.key === key) ?? null

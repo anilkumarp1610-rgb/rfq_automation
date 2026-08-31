@@ -18,6 +18,9 @@ import rfqVersionRoutes from './routes/rfqVersions.js';
 import specAnalysisRoutes from './routes/specAnalysis.js';
 import referenceRoutes from './routes/reference.js';
 import auditLogRoutes from './routes/auditLog.js';
+import companyRoutes from './routes/company.js';
+import userRoutes from './routes/users.js';
+import roleRoutes from './routes/roles.js';
 import { reportsRouter, downloadRouter } from './routes/reports.js';
 
 dotenv.config();
@@ -51,13 +54,16 @@ app.use('/rfq-versions', downloadRouter);
 app.use('/reference', referenceRoutes);
 app.use('/reports', reportsRouter);
 app.use('/audit-log', auditLogRoutes);
+app.use('/company', companyRoutes);
+app.use('/users', userRoutes);
+app.use('/roles', roleRoutes);
 app.use('/', masterRoutes);
 
 // In production, serve the built SPA from the same process.
 const API_PREFIXES = [
   'auth', 'customers', 'customer-parts', 'rfqs', 'rfq-versions', 'reference', 'reports',
-  'audit-log', 'health', 'material', 'product-types', 'processes', 'machines', 'qc-config',
-  'overhead-config', 'handling-config', 'customer-margin-map',
+  'audit-log', 'company', 'health', 'material', 'product-types', 'processes', 'machines',
+  'qc-config', 'overhead-config', 'handling-config', 'customer-margin-map',
 ];
 const webDist = process.env.WEB_DIST || path.resolve(process.cwd(), '../web/dist');
 const serveSpa = isProd && fs.existsSync(webDist);
