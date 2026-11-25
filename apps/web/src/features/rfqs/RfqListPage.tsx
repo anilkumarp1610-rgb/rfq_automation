@@ -1,13 +1,13 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { Search, Plus } from 'lucide-react'
 import { RFQ_STATUSES } from '@rfq/shared'
-import { resource } from '@/lib/api'
+import { resource, pagingParams } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/field'
-import DataGrid, { type GridColumn } from '@/components/DataGrid'
+import DataGrid, { type GridColumn, type GridSort } from '@/components/DataGrid'
 import { StatusBadge } from './StatusBadge'
 import CreateRfqDialog from './CreateRfqDialog'
 import { useAuth } from '@/lib/auth'
@@ -24,18 +24,29 @@ export default function RfqListPage() {
   const { canEditRfq } = useAuth()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['rfqs', search, status],
-    queryFn: () => rfqApi.list({ search: search || undefined, status: status || undefined }),
+  const [paging, setPaging] = useState<{ page: number; pageSize: number; sort: GridSort }>({
+    page: 0,
+    pageSize: 25,
+    sort: null,
   })
 
-  const rows = (data as Row[]) ?? []
+  // The server sends one page + the full filtered total (X-Total-Count); the grid just displays it.
+  const { data, isLoading } = useQuery({
+    queryKey: ['rfqs', search, status, paging],
+    queryFn: () =>
+      rfqApi.listPaged({ search: search || undefined, status: status || undefined, ...pagingParams(paging) }),
+    placeholderData: keepPreviousData, // no flicker while the next page loads
+  })
+
+  const rows = (data?.rows as Row[]) ?? []
+  // changing a filter goes back to page 1
+  const resetPage = () => setPaging((p) => ({ ...p, page: 0 }))
 
   const columns: GridColumn<Row>[] = [
     {
       key: 'rfqNumber',
       header: 'RFQ #',
+      sortKey: 'rfqNumber',
       cell: (r) => (
         <Link className="font-medium text-primary hover:underline" to={`/rfqs/${r.id}`}>
           {r.rfqNumber}
@@ -45,12 +56,14 @@ export default function RfqListPage() {
     {
       key: 'customer',
       header: 'Customer',
+      sortKey: 'customer',
       sortValue: (r) => r.customerPart?.customer?.code,
       cell: (r) => r.customerPart?.customer?.code ?? '—',
     },
     {
       key: 'part',
       header: 'Part',
+      sortKey: 'part',
       sortValue: (r) => r.customerPart?.customerPartNumber,
       cell: (r) => (
         <>
@@ -62,18 +75,21 @@ export default function RfqListPage() {
     {
       key: 'rev',
       header: 'Current rev',
+      noSort: true, // derived from the current revision — not a server-sortable column
       sortValue: (r) => current(r)?.revisionNo ?? 0,
       cell: (r) => (current(r) ? `R${current(r).revisionNo}` : '—'),
     },
     {
       key: 'status',
       header: 'Status',
+      sortKey: 'status',
       sortValue: (r) => current(r)?.status ?? r.status,
       cell: (r) => <StatusBadge status={current(r)?.status ?? r.status} />,
     },
     {
       key: 'quoted',
       header: 'Quoted / pc',
+      noSort: true, // comes from the current revision's cost summary
       align: 'right',
       sortValue: (r) => Number(current(r)?.costSummary?.quotedPricePerPc ?? -1),
       cell: (r) => fmtMoney(current(r)?.costSummary?.quotedPricePerPc),
@@ -81,6 +97,7 @@ export default function RfqListPage() {
     {
       key: 'rfqDate',
       header: 'RFQ date',
+      sortKey: 'rfqDate',
       sortValue: (r) => r.rfqDate,
       cell: (r) => fmtDate(r.rfqDate),
     },
@@ -113,6 +130,11 @@ export default function RfqListPage() {
         getRowKey={(r) => String(r.id)}
         loading={isLoading}
         emptyText="No RFQs yet."
+        server={{
+          ...paging,
+          total: data?.total ?? 0,
+          onChange: setPaging,
+        }}
         toolbar={
           <div className="flex flex-wrap gap-3">
             <div className="relative max-w-xs flex-1">
@@ -121,13 +143,19 @@ export default function RfqListPage() {
                 className="pl-8"
                 placeholder="Search RFQ / part…"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  resetPage()
+                }}
               />
             </div>
             <Select
               className="max-w-[12rem]"
               value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              onChange={(e) => {
+                setStatus(e.target.value)
+                resetPage()
+              }}
             >
               <option value="">All statuses</option>
               {RFQ_STATUSES.map((s) => (

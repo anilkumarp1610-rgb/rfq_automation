@@ -9,9 +9,42 @@ export interface SimilarTarget {
 }
 
 /** 1 when equal, decaying to 0 as the values diverge; 0 if either is missing. */
-function proximity(a: number | null, b: number | null): number {
+export function proximity(a: number | null, b: number | null): number {
   if (a == null || b == null || a <= 0 || b <= 0) return 0;
   return Math.max(0, 1 - Math.abs(a - b) / Math.max(a, b));
+}
+
+/** The parts of a stored reference that influence its similarity score. */
+export interface ScorableReference {
+  productTypeId: bigint | null;
+  materialCategoryId: bigint | null;
+  outcome: string;
+  dims: KeyDims | null;
+}
+
+/**
+ * How similar a past reference is to the target — pure, no database.
+ *   +3 same product type · +3 same material grade
+ *   + proximity of net weight (×2.5), max OD (×1.5), overall length (×1.5), across-flats (×0.5)
+ *   +0.25 if the quote was WON (prefer proven quotes on ties)
+ * Maximum 12.25; rounded to 3 decimals. 0 means "nothing in common".
+ */
+export function scoreReference(target: SimilarTarget, ref: ScorableReference): number {
+  let score = 0;
+  if (target.productTypeId && ref.productTypeId && ref.productTypeId.toString() === target.productTypeId.toString())
+    score += 3;
+  if (
+    target.materialCategoryId &&
+    ref.materialCategoryId &&
+    ref.materialCategoryId.toString() === target.materialCategoryId.toString()
+  )
+    score += 3;
+  score += proximity(target.dims.netWeightKg, ref.dims?.netWeightKg ?? null) * 2.5;
+  score += proximity(target.dims.maxOdMm, ref.dims?.maxOdMm ?? null) * 1.5;
+  score += proximity(target.dims.overallLengthMm, ref.dims?.overallLengthMm ?? null) * 1.5;
+  score += proximity(target.dims.acrossFlatsMm, ref.dims?.acrossFlatsMm ?? null) * 0.5;
+  if (ref.outcome === 'WON') score += 0.25;
+  return Number(score.toFixed(3));
 }
 
 const num = (v: unknown): number | null => {
@@ -71,30 +104,18 @@ export async function findSimilar(target: SimilarTarget, limit: number): Promise
         dims = null;
       }
 
-      let score = 0;
-      if (
-        target.productTypeId &&
-        r.productTypeId &&
-        r.productTypeId.toString() === target.productTypeId.toString()
-      )
-        score += 3;
-      if (
-        target.materialCategoryId &&
-        r.materialCategoryId &&
-        r.materialCategoryId.toString() === target.materialCategoryId.toString()
-      )
-        score += 3;
-      score += proximity(target.dims.netWeightKg, dims?.netWeightKg ?? null) * 2.5;
-      score += proximity(target.dims.maxOdMm, dims?.maxOdMm ?? null) * 1.5;
-      score += proximity(target.dims.overallLengthMm, dims?.overallLengthMm ?? null) * 1.5;
-      score += proximity(target.dims.acrossFlatsMm, dims?.acrossFlatsMm ?? null) * 0.5;
-      if (r.outcome === 'WON') score += 0.25; // prefer proven quotes on ties
+      const score = scoreReference(target, {
+        productTypeId: r.productTypeId,
+        materialCategoryId: r.materialCategoryId,
+        outcome: r.outcome,
+        dims,
+      });
 
       const part = r.rfqVersion.rfq.customerPart;
       return {
         referenceId: r.id.toString(),
         rfqVersionId: r.rfqVersionId.toString(),
-        score: Number(score.toFixed(3)),
+        score,
         samePart: false,
         rfqNumber: r.rfqVersion.rfq.rfqNumber,
         revisionNo: r.rfqVersion.revisionNo,

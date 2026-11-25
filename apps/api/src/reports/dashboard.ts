@@ -49,9 +49,9 @@ export async function dashboardSummary() {
   const quotedM = bucket(
     versions
       .filter((v) => ['QUOTED', 'WON', 'LOST'].includes(v.status))
-      .map((v) => ({ when: v.updatedAt }))
+      .map((v) => ({ when: v.quotedAt ?? v.updatedAt })) // when it was quoted, not when it was last edited
   );
-  const wonM = bucket(won.map((v) => ({ when: v.updatedAt })));
+  const wonM = bucket(won.map((v) => ({ when: v.decidedAt ?? v.updatedAt })));
 
   const monthly = months.map((m) => ({
     name: m.label,

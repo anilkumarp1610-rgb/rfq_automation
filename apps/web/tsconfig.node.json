@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "composite": true,
+    "emitDeclarationOnly": true, // never emit vite.config.js: vite would load it instead of vite.config.ts
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",

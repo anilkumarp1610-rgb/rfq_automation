@@ -17,6 +17,16 @@ const customers: MasterConfig = {
   description: 'Customer master with rating (1–5) that drives the margin recommendation.',
   endpoint: '/customers',
   searchable: true,
+  serverPaging: {
+    sortKeys: {
+      code: 'code',
+      name: 'name',
+      rating: 'rating',
+      currency: 'currency',
+      deliveryLocation: 'deliveryLocation',
+      _status: 'isActive',
+    },
+  },
   fields: [
     { name: 'code', label: 'Code', type: 'text', required: true },
     { name: 'name', label: 'Name', type: 'text', required: true },

@@ -10,11 +10,12 @@ import { prisma } from '../lib/prisma.js';
 import { authenticateToken, canEditRfq, AuthRequest } from '../middleware/auth.js';
 import { validateBody } from '../lib/validate.js';
 import { ah, bigIntParam, notFound } from '../lib/http.js';
-import { toPartAttributesData } from '../lib/rfqAttributes.js';
+import { toPartAttributesData, assertAttributeRefsExist } from '../lib/rfqAttributes.js';
 import { runCompute } from '../cost-engine/run.js';
 import { buildReference, REFERENCEABLE } from '../reference/build.js';
 import { costSheetViewModel } from '../reports/costSheet.js';
 import { audit } from '../lib/audit.js';
+import { setVersionStatus, QUOTE_STATUSES } from '../lib/versionStatus.js';
 import { rfqVersionFullInclude as fullInclude, loadRfqVersionFull as loadFull } from '../lib/rfqInclude.js';
 
 const router = Router();
@@ -43,6 +44,9 @@ router.put(
     const existing = await prisma.rfqVersion.findUnique({ where: { id } });
     if (!existing) notFound('RFQ version');
 
+    const attrData = b.partAttributes ? toPartAttributesData(b.partAttributes) : null;
+    if (attrData) await assertAttributeRefsExist(attrData);
+
     await prisma.$transaction(async (tx) => {
       await tx.rfqVersion.update({
         where: { id },
@@ -51,7 +55,6 @@ router.put(
           ...(b.basedOnPartRevision !== undefined
             ? { basedOnPartRevision: b.basedOnPartRevision ?? null }
             : {}),
-          ...(b.status ? { status: b.status } : {}),
         },
       });
 
@@ -63,12 +66,14 @@ router.put(
         await tx.rfqVersion.update({ where: { id }, data: { isCurrent: true } });
       }
 
-      if (b.partAttributes) {
-        const data = toPartAttributesData(b.partAttributes);
+      // after makeCurrent, so the RFQ header follows the right revision
+      if (b.status) await setVersionStatus(tx, id, b.status);
+
+      if (attrData) {
         await tx.rfqPartAttributes.upsert({
           where: { rfqVersionId: id },
-          create: { rfqVersionId: id, ...data },
-          update: data,
+          create: { rfqVersionId: id, ...attrData },
+          update: attrData,
         });
       }
     });
@@ -107,6 +112,20 @@ router.post(
       actualCost: b.actualCost === undefined ? undefined : (b.actualCost ?? null),
     });
     if (result.skipped) return res.status(409).json({ error: result.skipped });
+
+    // "Mark won / lost" is a real status change — otherwise the dashboard (which counts by status)
+    // would never see it. Recording only an actual cost leaves the status alone.
+    if (b.outcome && QUOTE_STATUSES.has(b.outcome)) {
+      const changed = await prisma.$transaction((tx) => setVersionStatus(tx, id, b.outcome!));
+      if (changed) {
+        await audit(req, {
+          entityType: 'RfqVersion',
+          entityId: id,
+          action: 'UPDATE',
+          changes: { status: b.outcome, via: 'reference' },
+        });
+      }
+    }
     res.json(result.reference);
   })
 );
@@ -128,7 +147,7 @@ router.post(
 
     await prisma.$transaction(async (tx) => {
       if (['DRAFT', 'COSTED'].includes(version!.status)) {
-        await tx.rfqVersion.update({ where: { id }, data: { status: 'QUOTED' } });
+        await setVersionStatus(tx, id, 'QUOTED');
       }
       await tx.rfq.update({
         where: { id: version!.rfqId },

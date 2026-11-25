@@ -9,8 +9,9 @@ extraction and historical lookup — **it never sets the price**. Every RFQ carr
 **versions per revision**, keyed to the **Customer Part Number**, and completed estimates
 become **historical reference data** for future RFQs.
 
-**Status:** MVP feature‑complete (phases 0–7). 29 unit tests + 25 end‑to‑end smoke checks
-passing.
+**Status:** MVP feature‑complete (phases 0–7), security hardening (phase 8) and an automated test
+suite (phase 10), then data‑integrity and scale work (phase 11): 357 unit tests + 264 API
+integration tests + 35 browser (UI) tests + 26 end‑to‑end smoke checks, run in CI.
 
 ---
 
@@ -263,8 +264,34 @@ Quotation panel. **Re-analyze** reuses the drawing already on file — the versi
 the last one saved for that part number (copied onto the new revision); only when nothing is
 on file does it ask for an upload (`409 { needsUpload: true }`).
 
-**No API key?** With a placeholder `ANTHROPIC_API_KEY` the analyzer returns a **deterministic
-mock extraction** (clearly flagged) so the whole flow stays demoable and testable.
+**No API key, or no credit? Free text reading.** Without a usable key the analyzer reads the **PDF's own
+text** (no AI, no cost): drawing no., item name (the `TITLE:` cell), material grade (the `MATERIAL:` cell or
+BOM column), revision, units (`ALL DIMENSIONS ARE IN mm` or inch marks) and the printed "Ø × length" size
+(`SHAFT 26 X 84 LONG`, `2 1/2" DIA X 49 1/8" LG.` → 63.5 × 1247.8 mm). Results are labelled **read from PDF
+text** (`source: 'text'`) with a flag saying what was *not* read — dimensions, tolerances and notes need the AI
+reading. Where a field has no label it is **guessed by position and flagged to confirm**. A scanned PDF (no
+selectable text) or an image cannot be read this way and is refused with a message saying so. Set
+`SPEC_EXTRACTOR=text` to read text only even while a key is set (e.g. an unfunded account); the default `auto`
+uses the AI whenever a key is configured. Only if neither works does it **refuse (503) with a clear message** —
+it never makes up values. (It used to return one canned shaft for every drawing, which made every
+upload look identical.) Demos and the automated tests opt in to that canned sample with
+`SPEC_ALLOW_MOCK=true`; it is then labelled **SAMPLE DATA** everywhere it appears. A failed model call
+is explained, not hidden: *no credit left*, *key rejected*, *rate limited*, *file too large*.
+
+**What is read from the title block.** `header.itemName` (the part's printed name, e.g. "BRUSH HOLDER")
+becomes the part name; `header.materialGrade` (e.g. "304L SS") picks the grade. The grade is matched to
+the Material Master ignoring case, spaces and family words (`304L SS` = `SS304L` = `304L`); when nothing
+matches, the wizard says so and asks you to pick one. Drawings in **inches** are converted to mm by the
+extraction (`units: "inch"`, × 25.4).
+
+**Test Drawings folder** (`/test-drawings`, ADMIN / MANAGER / ESTIMATOR): an internal page for trying
+drawings. Upload many PDFs or images at once, run the extraction on each (one by one, or *Analyze new*),
+and compare what was read — drawing no., item name, grade (and the master grade it maps to), units,
+Ø and length in mm, item and flag counts — in one sortable table. Click a file to see everything read,
+the model, seconds and token usage. A banner states whether a click uses the **live** model (paid),
+the free **text** reader or the **sample** stub (each row also has a free *Read text* button when the AI is on); if different files come back with identical values the page
+warns you. Nothing there creates a customer, part or RFQ. Files live in `uploads/test-drawings/` (results
+in `_analysis/`) — back that folder up like the rest of `uploads/` if you care about it.
 `GET /customer-parts/:id/specs` returns the full versioned spec history for a part.
 
 ### 4. Deterministic cost engine
@@ -317,6 +344,12 @@ mock extraction** (clearly flagged) so the whole flow stays demoable and testabl
 open‑pipeline value, won value, active customers, a 6‑month **RFQs / quoted / won** bar chart,
 and a clickable **recent‑activity** feed.
 
+The monthly chart buckets by **when it happened**: `rfq_versions.quoted_at` / `decided_at` are
+stamped when a version enters QUOTED / WON / LOST (one helper, `lib/versionStatus.ts`, used by
+every path that changes status — editing the version, approving the quotation, and **Mark won /
+lost**), not by `updated_at`, which moves on any edit. Marking a quotation won or lost is a real
+status change, so it counts toward win rate and won value.
+
 ### 8. Audit log & security
 
 - **`audit_log`** — every master, customer‑part, RFQ, version, **compute** (final vs
@@ -328,7 +361,17 @@ and a clickable **recent‑activity** feed.
   (20 attempts / 15 min); production CORS allow‑list (`WEB_ORIGIN`); 35 MB body cap;
   `x-powered-by` off; parameterised queries throughout via Prisma.
 - **Auth** — JWT (24 h); `GET /auth/me` and `POST /auth/refresh`; the SPA re‑hydrates roles
-  from the server on load.
+  from the server on load. **There is no public sign‑up** — accounts are created by an
+  administrator on the Security screen.
+- **Access follows the database, not the token.** `authenticateToken` verifies the JWT and then loads
+  the user's current `is_active` flag and roles on **every request** (one primary‑key lookup). Roles on
+  `req.user` come from the database, so deactivating, deleting or demoting someone takes effect on
+  their very next request — a still‑valid token no longer carries stale access. A deactivated user
+  gets 401 (the SPA signs them out).
+- **JWT secret enforcement** — `lib/env.ts` loads `.env` *before* any other module and validates
+  `JWT_SECRET`. In production the API **refuses to start** if the secret is missing, a known
+  placeholder, or shorter than 32 characters; in development it warns and uses an insecure
+  dev‑only fallback.
 
 ### 9. Company / firm profile
 
@@ -388,7 +431,8 @@ add extra roles, which are treated as **view‑only** until wired into the code.
 deleted.
 
 Default seeded admin: **`admin@rfq.local` / `Admin@123`** — change the password after first
-login. `POST /auth/register` creates an ESTIMATOR.
+login. There is no self‑registration endpoint; further users are added by an ADMIN on the
+Security screen (`POST /users`).
 
 ---
 
@@ -444,9 +488,12 @@ and port (SPA fallback for non‑API GET routes).
   master: search, `?<fk>=<id>` filtering (drill‑down scoping), soft‑delete,
   FK‑string→BigInt coercion, derived‑field transforms, effective‑date auto‑close, and audit
   logging.
-- **`RfqPartAttributes` has no FK relations** to material category / shape / product type
-  (loose `BigInt?` columns) — those names are resolved with extra `findUnique` calls where
-  needed.
+- **`RfqPartAttributes` references are real foreign keys** to material category / shape / product
+  type (`onDelete: NoAction` — masters are soft‑deleted, and SQL Server forbids multiple cascade
+  paths). Reads use the relations (`include`); writes validate the ids first and answer a clear 422
+  ("Unknown material grade…") instead of a bare constraint error.
+- **Optional server‑side paging** on the lists that grow — `/rfqs`, `/customer-parts`, `/customers`,
+  every generic master, and `/audit-log`. See [Paging](#paging).
 - **SQL Server long text** — all JSON / long‑text columns are `@db.NVarChar(Max)` (the Prisma
   default is `NVARCHAR(1000)`).
 - **Spec‑analysis relations** use `onDelete: NoAction, onUpdate: NoAction` to satisfy SQL
@@ -517,15 +564,13 @@ erDiagram
 
 ## API reference
 
-All endpoints require `Authorization: Bearer <jwt>` **except** `POST /auth/login`,
-`POST /auth/register` and `GET /health`. Validation failures return `422` with a
-`{ error, issues[] }` body.
+All endpoints require `Authorization: Bearer <jwt>` **except** `POST /auth/login` and
+`GET /health`. Validation failures return `422` with a `{ error, issues[] }` body.
 
 ### Auth
 | Method | Path | Notes |
 |---|---|---|
 | POST | `/auth/login` | `{ email, password }` → `{ token, user }` (rate‑limited) |
-| POST | `/auth/register` | Creates an ESTIMATOR (rate‑limited) |
 | GET | `/auth/me` | Current user + roles (source of truth) |
 | POST | `/auth/refresh` | Swap a valid token for a fresh one |
 
@@ -547,10 +592,28 @@ material hierarchy — FK filters for drill‑down (`/material/categories?materi
 | GET | `/customer-parts/:id/specs` | Full versioned spec history |
 | POST / PUT | `/customer-parts` · `/customer-parts/:id` | edit = ADMIN/MANAGER/ESTIMATOR |
 
+### Paging
+
+List endpoints are **backward compatible**: with no paging parameters they return the whole list as a
+plain array, exactly as before. Add `?page=` / `?pageSize=` to get one page:
+
+| Parameter | Meaning |
+|---|---|
+| `page` | 1‑based page number (≥ 1) |
+| `pageSize` | rows per page, 1–200 (larger values are capped at 200) |
+| `sort`, `dir` | sort key and `asc`/`desc`. `/rfqs` and `/customer-parts` accept a fixed set of keys (`rfqNumber`, `customer`, `part`, `status`, `rfqDate`… / `customerPartNumber`, `partName`…); masters accept any real column. An unsupported key is a 4xx, never a 500 |
+
+The body stays a plain array (the requested page); the **full filtered count** is in the
+`X-Total-Count` response header (exposed to browsers via CORS). The order is made stable with an `id`
+tie‑breaker, so pages never overlap or skip rows. Invalid values (`page=0`, `pageSize=abc`…) are 422.
+`/audit-log` pages newest‑first; without paging it keeps its original `?limit=` (default 100, max 500).
+The web app pages RFQs, Customer Parts, Customer Master and the Audit Log on the server; the small
+masters (materials, processes, machines…) still load fully and sort in the browser.
+
 ### RFQ
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/rfqs` | `?search=` `?status=` `?customerId=` |
+| GET | `/rfqs` | `?search=` `?status=` `?customerId=` · pageable (see Paging) |
 | GET | `/rfqs/:id` | Full RFQ + all versions |
 | GET | `/rfqs/:id/versions` | Version list |
 | POST | `/rfqs` | Creates RFQ + revision 1 (`rfqNumber` optional — auto `YYYY/MM/NNNN`) |
@@ -585,6 +648,7 @@ material hierarchy — FK filters for drill‑down (`/material/categories?materi
 ### History
 | Method | Path | Notes |
 |---|---|---|
+| GET / POST / DELETE | `/test-drawings`, `/test-drawings/:name/{file,analyze,analysis}` | internal test folder: list (+ `extraction: live\|text\|sample`; `POST …/analyze?mode=text` reads the PDF text only), multi-file upload (`files`), view, analyze one, stored result, delete — ADMIN / MANAGER / ESTIMATOR |
 | GET | `/reference/similar` | `?partId=` or `?versionId=` (`&limit=`) → `{ target, matches[] }` |
 
 ### Reports & documents
@@ -618,13 +682,14 @@ src/
   components/
     ui/               button, card, input, label, badge, table, dialog, field (select/textarea)
     AppShell.tsx      top bar (user menu, theme toggle) + collapsible sidebar + full-width content
-    PrivateRoute.tsx  auth guard
+    DataGrid.tsx      shared sortable / paginated grid
+    PrivateRoute.tsx  auth guard (optional capability: masters | rfq | admin)
   features/
     masters/          config-driven CRUD — configs.ts (4 groups / sections + drill-downs),
                       MasterGroupPage.tsx (tab shell), MasterPage.tsx (list + form), types.ts
     rfqs/             RfqListPage, RfqDetailPage, CreateRfqWizard, CreateRfqDialog, StatusBadge,
                       SpecAnalysis, CostSheet, SimilarRfqs, QuotationPanel, customerPartConfig
-  pages/              Login, Dashboard, AuditLog
+  pages/              Login, Dashboard, AuditLog, CompanySettings, Security (hosts Users + Roles)
   lib/                api.ts (axios + resource() + downloadFile), auth.tsx (context), utils.ts
   main.tsx            applies the saved/system theme before render
   App.tsx             routes + providers (QueryClient, AuthProvider, Toaster)
@@ -634,7 +699,7 @@ src/
 
 | Route | Screen |
 |---|---|
-| `/login` | Login (pre‑filled demo credentials) |
+| `/login` | Login |
 | `/` | Dashboard — KPIs, 6‑month chart, recent activity |
 | `/rfqs` | RFQ grid — status + search filters, "New RFQ from spec" + manual create |
 | `/rfqs/new` | Create-RFQ wizard — upload spec → review → quantities → done |
@@ -693,7 +758,9 @@ The seed creates the two worked drawings from the plan — **P01273549** (SHAFT 
 |---|---|
 | `DATABASE_URL` | Prisma SQL Server connection string |
 | `JWT_SECRET` | Token signing secret — **set a long random value** |
-| `ANTHROPIC_API_KEY` | `sk-ant-…` for live Spec Analysis; a placeholder → deterministic mock |
+| `ANTHROPIC_API_KEY` | `sk-ant-…` for live Spec Analysis (the account needs credit); a placeholder → analysis is refused with a clear message |
+| `SPEC_EXTRACTOR` | `text` = read only the PDF's own text (free, no AI call) even when a key is set; default `auto` |
+| `SPEC_ALLOW_MOCK` | `true` = with no real key, return a canned sample shaft (demos / tests only; flagged SAMPLE DATA) |
 | `SPEC_MODEL` | Override the extraction model (default `claude-opus-5`) |
 | `PORT` | API port (default `4000`) |
 | `NODE_ENV` | `development` \| `production` |
@@ -716,7 +783,8 @@ The seed creates the two worked drawings from the plan — **P01273549** (SHAFT 
 | `npm run dev` | Run API + web dev servers |
 | `npm run typecheck` | Typecheck the API + build the web app |
 | `npm run build` | Build the web SPA (`apps/web/dist`) |
-| `npm test` | Cost‑engine unit tests |
+| `npm test` | Unit tests (no database) |
+| `npm run test:integration` | API integration tests against the `RFQ_TEST` database (see [Testing](#testing)) |
 | `npm run smoke` | End‑to‑end smoke test against a running API (`SMOKE_URL=` to target another host) |
 | `npm run prisma:generate` / `prisma:migrate` / `prisma:seed` | Prisma tasks |
 | `npm run db:reset` | Reset the DB + re‑migrate + re‑seed |
@@ -728,7 +796,9 @@ The seed creates the two worked drawings from the plan — **P01273549** (SHAFT 
 | `npm run dev` | `tsx watch` |
 | `npm run start` | `tsx src/index.ts` (production run) |
 | `npm run build` | `tsc --noEmit` — typecheck gate, **does not emit `dist/`** |
-| `npm test` | `vitest run` |
+| `npm test` | `vitest run` — unit tests only |
+| `npm run test:integration` | `vitest run -c vitest.integration.config.ts` — API integration tests |
+| `npm run test:e2e` | Playwright browser tests (real Chrome, `RFQ_TEST`) — see [Testing](#testing) |
 | `npm run prisma:migrate` | `prisma migrate deploy` (production) |
 | `npm run prisma:migrate:dev` | `prisma migrate dev` |
 
@@ -736,20 +806,128 @@ The seed creates the two worked drawings from the plan — **P01273549** (SHAFT 
 
 ## Testing
 
-### Unit — cost engine (`apps/api/src/cost-engine/engine.test.ts`)
+Four layers, from fastest to broadest:
 
-**29 tests** covering: rounding, forged input weight, every process costing method, the
-input‑weight override, per‑kg vs per‑lot handling, all three QC modes, margin
-recommendation / adjustment / override (including the "override = 0" trap), a full worked
-build‑up with hand‑checked numbers, and a determinism check.
+| Layer | Command | Needs a DB? | What it covers |
+|---|---|---|---|
+| **Unit** | `npm test` | no | cost engine, similarity ranking, weight derivation, suggested process lines, paging, status transitions, auth middleware, error handler, attribute mapping, JWT‑secret rules, the test‑DB guard |
+| **API integration** | `npm run test:integration` | yes — `RFQ_TEST` only | the real Express app + SQL Server through supertest: auth, the role matrix, user/role rules, RFQ versioning, the drawing‑to‑RFQ wizard, cost resolution, PDF/XLSX output |
+| **Browser (UI)** | `npm run test:e2e` | yes — `RFQ_TEST` only | real Chrome driving the real web app and API: sign‑in / sign‑out, a deactivated user being locked out, what each role sees and can open, RFQ paging / sort / search, creating RFQs, customer CRUD, the audit log |
+| **Smoke** | `npm run smoke` | a running API | one end‑to‑end pass against a deployed instance |
+
+### Unit (`npm test`, 357 tests)
+
+No database, no network. Modules that read the database are tested with Prisma faked (`vi.mock`).
+
+| File | Tests | Covers |
+|---|---|---|
+| `cost-engine/engine.test.ts` | 29 | rounding, forged input weight, every costing method, per‑kg vs per‑lot handling, all QC modes, margin recommendation / adjustment / override (incl. the "override = 0" trap), a hand‑checked build‑up, determinism |
+| `reference/similar.test.ts` | 29 | the similarity score — every weight (+3 type, +3 grade, ×2.5 / ×1.5 / ×1.5 / ×0.5 proximity, +0.25 WON, max 12.25) — and the ranking around it: self‑exclusion, zero‑score drop, ordering, limit, corrupt `keyDims` |
+| `spec-analysis/suggestLines.test.ts` | 35 | drawing callouts → process lines: turning time per thread / chamfer, drilling per hole, grinding for tight fits and GD&T, ordering, and a flag for every missing process |
+| `spec-analysis/weights.test.ts` | 20 | net and bar‑stock weight from the drawing geometry (checked against the two worked drawings), density scaling, fallbacks, "insufficient geometry" |
+| `lib/paging.test.ts` | 33 | opt‑in rules, skip/take arithmetic, the 200 cap, every invalid input → 422, sort‑key injection attempts, `X-Total-Count` |
+| `lib/versionStatus.test.ts` | 18 | the single status‑transition helper: `quotedAt` / `decidedAt` rules and when the RFQ header follows |
+| `middleware/auth.test.ts` | 24 | token rejection paths, **roles and active‑flag come from the database not the token**, `requireRole`, and the named guards (`canEditMasters` / `canEditRfq` / `canManageUsers`) |
+| `middleware/errorHandler.test.ts` | 42 | Zod → 422, duplicate / not‑found / FK → 409 / 404 / 409; **an unexpected 5xx never sends its message to the client** (only a deliberately‑exposed one, or anything in `development`); an AI‑provider failure becomes a plain 502 (never a 401 that would log the user out); stack traces only in development |
+| `lib/rfqAttributes.test.ts` | 18 | `forgingLossPct` → `forgiveLossPct`, partial updates stay partial, clearing vs zero, up‑front foreign‑key checks |
+| `lib/env.test.ts` | 10 | production refuses a missing / placeholder / short `JWT_SECRET`; tokens forged with the old hardcoded secret are rejected |
+| `test-support/db-guard.test.ts` | 8 | the safety rails: nothing but a `*_TEST` database is ever used |
+| `spec-analysis/filenamePart.test.ts` | 8 | part number from the drawing's file name |
+| `spec-analysis/grade.test.ts` | 28 | drawing material text → master grade (`304L SS` = `SS304L` = `304L`), placeholders, ambiguity, no match on tiny codes |
+| `spec-analysis/textExtract.test.ts` | 26 | the free PDF‑text reader on real generated PDFs: title / grade / drawing no. / revision / size, inch → mm, two drawings → two answers, "AS PER BOM" is not a grade, scans and damaged files refused, position guesses are flagged |
+| `spec-analysis/analyze.test.ts` | 29 | extraction with the model faked: refuses without a key (never invents values), sample only when opted in, what is asked (item name, grade, units, inch → mm), what comes back, refusals / cut‑offs / bad schema |
+
+These were mutation‑checked: deliberately breaking 11 behaviours (a scoring weight, the net‑weight cap,
+the page‑size cap, roles‑from‑token, deactivated users allowed, …) each made tests fail.
+
+### API integration (`npm run test:integration`, 264 tests)
+
+Files live in `apps/api/src/__tests__/*.int.test.ts`; the app is imported directly from `app.ts`
+(no port is opened).
+
+| File | Covers |
+|---|---|
+| `auth` | login, inactive accounts, expired / garbage / forged tokens, **no self‑registration**, `/me`, `/refresh` |
+| `rbac` | a 4‑role × 24‑endpoint permission matrix + anonymous, incl. "VIEWER gets the quotation but not the cost sheet" and "roles are never deleted" |
+| `users` | create / update / soft‑delete, duplicate email, password keep‑vs‑change, **last‑active‑admin protection**, role catalogue |
+| `session` | **access follows the database**: a deactivated / deleted / demoted user loses access on the very next request with an already‑issued token; promotion takes effect without re‑login |
+| `rfq` | `YYYY/MM/NNNN` numbering, revision increment, exactly one `is_current`, attribute copy, **foreign‑key integrity of part attributes**, the drawing wizard incl. the "confirm a new revision" 409 |
+| `compute` | effective‑dated material price resolved as of the costing date, forging‑loss allowance, missing‑data warnings, bought‑out parts, persist vs preview, margin override, process lines |
+| `reports` | quotation / cost‑sheet PDF validity, XLSX numbers equal the API's numbers, the "not costed yet" 409s, quote → reference |
+| `dashboard` | quoted / decided timestamps, **Mark won / lost changes the real status**, month buckets use when it happened |
+| `paging` | backward compatibility, totals, stable gap‑free pages, sorting, input validation, caps, CORS header — on RFQs, customers, other masters, parts and the audit log |
+
+**Safety rails — these tests only ever touch a `*_TEST` database.** The app's SQL login is `sa` on
+an instance that can host unrelated databases, so:
+
+1. `TEST_DATABASE_URL` is used if set (CI); otherwise your `DATABASE_URL` is reused with the
+   database swapped for **`RFQ_TEST`** (same server and credentials).
+2. The suite **refuses to start** unless that database's name ends in `_TEST`.
+3. After connecting it asks the server `SELECT DB_NAME()` and aborts unless the answer ends in `_TEST`.
+4. Rate limiting is off (`NODE_ENV=test`), uploads go to a temp folder (`UPLOAD_DIR`), and the AI key
+   is forced to a placeholder so extraction is the deterministic mock — **the suite never makes a paid
+   API call**.
+
+Each test creates its own uniquely‑named users, customers and masters, so it does not depend on
+whatever rates happen to be in the database and can be re‑run without cleanup.
+
+**One‑time setup of `RFQ_TEST`** — either of:
+
+```sql
+-- (a) a copy of your current data (what this project did):
+BACKUP DATABASE [RFQ_DB] TO DISK = N'<backup dir>RFQ_DB_before_tests.bak' WITH COPY_ONLY, CHECKSUM;
+RESTORE DATABASE [RFQ_TEST] FROM DISK = N'<backup dir>RFQ_DB_before_tests.bak'
+  WITH MOVE N'RFQ_DB' TO N'<data dir>RFQ_TEST.mdf', MOVE N'RFQ_DB_log' TO N'<data dir>RFQ_TEST_log.ldf';
+```
 
 ```bash
-npm test
+# (b) an empty database built from the migrations (what CI does):
+#   CREATE DATABASE RFQ_TEST;  then, with DATABASE_URL pointing at it:
+npm run prisma:migrate && npm run prisma:seed
 ```
+
+Helper: `npm run test:db -- migrate | seed | status | drift` runs Prisma against **`RFQ_TEST` only**
+(same `_TEST` guard). `drift` compares the real `RFQ_TEST` structure with `schema.prisma` and exits
+non‑zero on any difference — run it after writing a migration. **New migrations go to `RFQ_TEST` first**;
+apply them to the live database deliberately with `npm run prisma:migrate`.
+
+The suite needs the four seeded roles (`ADMIN`, `MANAGER`, `ESTIMATOR`, `VIEWER`) to exist. It is
+safe to re‑create `RFQ_TEST` at any time — nothing in it matters.
+
+### Browser / UI (`npm run test:e2e`, 35 tests)
+
+[Playwright](https://playwright.dev) drives the **Chrome already installed on the machine** (no browser
+download) against the real web app (Vite) and the real API — started for you on **ports 4010 / 5183**, so
+a running dev server on 4000 / 5173 is never touched. The API is launched by `e2e/server/start-api.ts`,
+which applies the same two guards as the integration suite (URL must end in `_TEST`, then `DB_NAME()` is
+checked), so it can only ever use `RFQ_TEST`.
+
+| Spec | Covers |
+|---|---|
+| `auth.spec.ts` | protected pages redirect to login; wrong password; form validation without an API call; sign‑in → dashboard → reload → logout; **a deactivated user is dropped on their next request** |
+| `rbac.spec.ts` | per role (viewer / estimator / manager / admin): the sidebar, pages that bounce to the dashboard, RFQ actions, read‑only RFQ page |
+| `rfqs.spec.ts` | server paging (Next / Prev / page size), server sort across *all* pages, search, status filter, create an RFQ, duplicate number refused, compute shows a readable result |
+| `drawings.spec.ts` | the Test Drawings folder: hidden from viewers, multi‑file upload, refused file types, analyse, the identical‑values warning, details, delete; **Read text** on two real PDFs gives each its own item name and grade |
+| `masters.spec.ts` | customer create → search → duplicate refused → edit → delete; server‑side sort; audit log |
+
+Fixture users (`e2e-<role>@e2e.local`) and 30 `E2E-PG-nnn` RFQs are created by the run itself (idempotent).
+Tests sign in by injecting a token (fast) except `auth.spec.ts`, which uses the real form. They run serially
+(`workers: 1`) because they share one database. Failure traces and screenshots land in `e2e/test-results/`.
+Like the other suites these were mutation‑checked: breaking the route guard and the page‑number mapping each
+made tests fail.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every push / PR against a SQL Server 2022 service container:
+install → Prisma generate → typecheck (API) → build (web) → unit tests → create `RFQ_TEST` →
+`migrate deploy` → seed → integration tests → browser tests (Chrome is preinstalled on the runner; the
+report is uploaded on failure). The migrate + seed + integration chain was verified locally against an
+empty database; the workflow file itself — including the browser step — has not yet run on GitHub.
 
 ### End‑to‑end — smoke (`scripts/smoke.mjs`)
 
-**20 assertions** against a running API: login → `/auth/me` → dashboard → master CRUD →
+**26 assertions** against a running API: login → `/auth/me` → self‑registration disabled →
+dashboard → master CRUD →
 effective‑date validation → customer part → RFQ + version → part attributes → process lines →
 compute → similar lookup → analyze rejected without a drawing → generate quotation →
 `cost-sheet.pdf` / `.xlsx` downloads → audit log recorded. Exits non‑zero on any failure.
@@ -791,22 +969,36 @@ rfq_automation/
 ├── apps/
 │   ├── api/
 │   │   └── src/
-│   │       ├── index.ts                 Express bootstrap, middleware, route mounts, prod SPA serving
+│   │       ├── app.ts                   the Express app (middleware, route mounts, prod SPA serving) — no listen()
+│   │       ├── index.ts                 starts app.ts on a port + DB connectivity check
+│   │       ├── __tests__/               API integration tests (*.int.test.ts) — see Testing
+│   │       ├── test-support/            integration harness: setup.ts, db-guard.ts (+ test), helpers.ts
 │   │       ├── middleware/              auth (JWT + requireRole), errorHandler
-│   │       ├── lib/                     prisma, jwt, validate, http helpers, crud factory, audit, serialize
-│   │       ├── routes/                  auth, customers, masters, customerParts, rfqs, rfqVersions,
-│   │       │                            specAnalysis, reference, reports, auditLog
-│   │       ├── cost-engine/             engine.ts (pure) · types.ts · resolve.ts · engine.test.ts
-│   │       ├── spec-analysis/           prompt.ts · analyze.ts · mock.ts · weights.ts · persist.ts
+│   │       ├── lib/                     env (loads .env + validates JWT_SECRET — must be imported first),
+│   │       │                            prisma, jwt, validate, http, crud factory, audit, serialize, upload,
+│   │       │                            company, rfqNumber, rfqAttributes, rfqInclude
+│   │       ├── routes/                  auth, users, roles, customers, masters, customerParts, rfqs,
+│   │       │                            rfqSpec, rfqVersions, specAnalysis, reference, reports,
+│   │       │                            auditLog, company
+│   │       ├── cost-engine/             engine.ts (pure) · types.ts · resolve.ts · run.ts · engine.test.ts
+│   │       ├── spec-analysis/           prompt · analyze · mock · weights · persist · suggestLines · filenamePart
+│   │       ├── reference/               build.ts (history rows) · similar.ts (similarity ranking)
 │   │       └── reports/                 costSheet.ts (view model) · pdf.ts · xlsx.ts · dashboard.ts
 │   └── web/
 │       └── src/                         components, features/{masters,rfqs}, pages, lib
 ├── packages/
-│   └── shared/src/                      enums, common, auth, masters, rfq, spec  (Zod schemas + types)
+│   └── shared/src/                      enums, common, auth, admin, company, masters, rfq, spec
+│                                        (Zod schemas + types)
 ├── prisma/
-│   ├── schema.prisma                    28 models
-│   ├── migrations/                      init · spec_analysis_links · longtext_columns
+│   ├── schema.prisma                    29 models
+│   ├── migrations/                      init · spec_analysis_links · longtext_columns · bought_out_parts ·
+│   │                                    packing_transportation_modes · company_settings ·
+│   │                                    cost_explain_json · users_phone_roles_meta ·
+│   │                                    version_status_timestamps · part_attributes_foreign_keys
 │   └── seed.ts                          roles, admin, masters, worked examples (idempotent)
+├── .github/workflows/ci.yml            typecheck · unit · migrate/seed · integration · browser tests
+├── e2e/                                 Playwright browser tests: tests/*.spec.ts, global-setup.ts,
+│                                        server/ (start-api.ts, seed.ts — tsx, RFQ_TEST only)
 ├── scripts/smoke.mjs
 ├── DEPLOY.md
 └── README.md
@@ -816,18 +1008,18 @@ rfq_automation/
 
 ## Known limitations & follow‑ups
 
-- **List endpoints are unpaginated** — fine for an MVP dataset, add cursor pagination for scale.
-- **`POST /auth/register` is open** — anyone can self‑register as an ESTIMATOR; gate it or add
-  an admin user‑management screen.
-- **`RfqPartAttributes` has no FK relations** to material category / shape / product type —
-  resolved with extra queries in a few places; adding Prisma relations would tidy this.
-- **Dashboard `monthly` buckets versions by `updated_at`** — an approximation of when each
-  reached QUOTED/WON.
-- **Refresh is not rotating** — `/auth/refresh` re‑issues from a still‑valid token rather than
-  a separate refresh‑token family.
-- **Cost engine unit‑tested; the resolver and reports are covered only by the smoke test.**
-- **No CI config** committed — wire `npm run typecheck && npm test && npm run smoke` into a
-  pipeline.
+- **Refresh is sliding, not rotating.** `/auth/refresh` re‑issues from a still‑valid token. Because
+  access is re‑checked against the database on every request this can no longer extend a revoked
+  account, but a stolen token can still be refreshed for as long as the account stays active. A real
+  fix needs server‑side refresh‑token families / revocation — deliberately not built yet.
+- **Small masters are not server‑paged** (materials, processes, machines, handling, QC, overhead…) —
+  they are bounded in practice. Opt a master in with `serverPaging` in its config if one grows.
+- **The per‑request user lookup is uncached** — one indexed primary‑key read per authenticated request.
+  Fine at this scale; add a short TTL cache only if profiling says so (it would reintroduce a
+  matching revocation delay).
+- **Not yet covered by automated tests:** the AI call itself (mocked by design), the web UI (no
+  component / e2e tests), the Masters CRUD screens beyond the permission matrix, and the
+  `.github/workflows/ci.yml` run on GitHub.
 
 ---
 

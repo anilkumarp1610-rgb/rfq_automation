@@ -3,9 +3,10 @@ import { rfqCreateSchema, rfqUpdateSchema, rfqVersionCreateSchema } from '@rfq/s
 import { prisma } from '../lib/prisma.js';
 import { authenticateToken, canEditRfq, userId, AuthRequest } from '../middleware/auth.js';
 import { validateBody } from '../lib/validate.js';
-import { ah, bigIntParam, notFound } from '../lib/http.js';
+import { ah, bigIntParam, notFound, badRequest } from '../lib/http.js';
 import { audit } from '../lib/audit.js';
 import { withRfqNumber } from '../lib/rfqNumber.js';
+import { parsePaging, sendPage } from '../lib/paging.js';
 
 const router = Router();
 router.use(authenticateToken);
@@ -28,30 +29,51 @@ router.get(
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const customerId = typeof req.query.customerId === 'string' ? req.query.customerId : undefined;
 
-    const rfqs = await prisma.rfq.findMany({
-      where: {
-        ...(status ? { status } : {}),
-        ...(customerId ? { customerPart: { customerId: BigInt(customerId) } } : {}),
-        ...(search
-          ? {
-              OR: [
-                { rfqNumber: { contains: search } },
-                { customerPart: { customerPartNumber: { contains: search } } },
-                { customerPart: { partName: { contains: search } } },
-              ],
-            }
-          : {}),
+    const where = {
+      ...(status ? { status } : {}),
+      ...(customerId ? { customerPart: { customerId: BigInt(customerId) } } : {}),
+      ...(search
+        ? {
+            OR: [
+              { rfqNumber: { contains: search } },
+              { customerPart: { customerPartNumber: { contains: search } } },
+              { customerPart: { partName: { contains: search } } },
+            ],
+          }
+        : {}),
+    };
+    const include = {
+      customerPart: { include: { customer: true } },
+      versions: {
+        where: { isCurrent: true },
+        include: { costSummary: true },
       },
-      include: {
-        customerPart: { include: { customer: true } },
-        versions: {
-          where: { isCurrent: true },
-          include: { costSummary: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    res.json(rfqs);
+    } as const;
+
+    const paging = parsePaging(req.query);
+    if (!paging) {
+      return res.json(await prisma.rfq.findMany({ where, include, orderBy: { createdAt: 'desc' } }));
+    }
+
+    // Sortable columns -> how to order by them. Anything else is a 422 (the grid only offers these).
+    const dir = paging.dir;
+    const sorts: Record<string, object> = {
+      rfqNumber: { rfqNumber: dir },
+      rfqDate: { rfqDate: dir },
+      requiredDate: { requiredDate: dir },
+      status: { status: dir },
+      createdAt: { createdAt: dir },
+      customer: { customerPart: { customer: { code: dir } } },
+      part: { customerPart: { customerPartNumber: dir } },
+    };
+    if (paging.sort && !(paging.sort in sorts)) badRequest(`Cannot sort RFQs by "${paging.sort}"`, 422);
+    const orderBy = [paging.sort ? sorts[paging.sort] : { createdAt: 'desc' as const }, { id: 'desc' as const }];
+
+    const [rfqs, total] = await Promise.all([
+      prisma.rfq.findMany({ where, include, orderBy, skip: paging.skip, take: paging.take }),
+      prisma.rfq.count({ where }),
+    ]);
+    sendPage(res, rfqs, total);
   })
 );
 
@@ -90,11 +112,12 @@ router.post(
     const part = await prisma.customerPart.findUnique({ where: { id: BigInt(b.customerPartId) } });
     if (!part) notFound('Customer part');
 
-    const rfq = await withRfqNumber((rfqNumber) =>
+    const rfq = await withRfqNumber(
+      (rfqNumber) =>
       prisma.$transaction(async (tx) => {
         const created = await tx.rfq.create({
           data: {
-            rfqNumber: b.rfqNumber || rfqNumber,
+            rfqNumber,
             customerPartId: BigInt(b.customerPartId),
             rfqDate: b.rfqDate,
             requiredDate: b.requiredDate ?? null,
@@ -118,7 +141,8 @@ router.post(
           },
         });
         return created;
-      })
+      }),
+      b.rfqNumber // explicit number (if any) is used as-is; otherwise auto-generated
     );
 
     await audit(req, { entityType: 'Rfq', entityId: rfq.id, action: 'CREATE', changes: { rfqNumber: rfq.rfqNumber, customerPartId: b.customerPartId } });

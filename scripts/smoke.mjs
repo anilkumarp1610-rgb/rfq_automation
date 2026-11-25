@@ -55,6 +55,14 @@ async function main() {
 
   check('auth/me', (await api('GET', '/auth/me')).data?.roles?.includes('ADMIN'));
 
+  // Public self-registration must not exist (accounts are admin-created only).
+  const reg = await api('POST', '/auth/register', {
+    email: `smoke-${stamp}@example.com`,
+    name: 'Smoke Intruder',
+    password: 'Passw0rd!',
+  });
+  check('self-registration is disabled', reg.status === 404, { status: reg.status });
+
   const dash = await api('GET', '/reports/dashboard');
   check('dashboard', dash.status === 200 && typeof dash.data?.counts?.rfqs === 'number');
 

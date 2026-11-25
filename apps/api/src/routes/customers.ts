@@ -4,6 +4,7 @@ import { prisma } from '../lib/prisma.js';
 import { authenticateToken, canEditMasters, AuthRequest } from '../middleware/auth.js';
 import { validateBody } from '../lib/validate.js';
 import { ah, bigIntParam, notFound } from '../lib/http.js';
+import { parsePaging, sendPage } from '../lib/paging.js';
 
 const router = Router();
 router.use(authenticateToken);
@@ -13,16 +14,21 @@ router.get(
   ah(async (req: AuthRequest, res: Response) => {
     const search = typeof req.query.search === 'string' ? req.query.search : undefined;
     const activeOnly = req.query.activeOnly !== 'false';
-    const customers = await prisma.customer.findMany({
-      where: {
-        ...(activeOnly ? { isActive: true } : {}),
-        ...(search
-          ? { OR: [{ name: { contains: search } }, { code: { contains: search } }] }
-          : {}),
-      },
-      orderBy: { name: 'asc' },
-    });
-    res.json(customers);
+    const where = {
+      ...(activeOnly ? { isActive: true } : {}),
+      ...(search ? { OR: [{ name: { contains: search } }, { code: { contains: search } }] } : {}),
+    };
+    const paging = parsePaging(req.query);
+    if (!paging) {
+      return res.json(await prisma.customer.findMany({ where, orderBy: { name: 'asc' } }));
+    }
+    // any real column may be sorted on (an unknown one is rejected by Prisma -> 400); id keeps pages stable
+    const orderBy = paging.sort ? [{ [paging.sort]: paging.dir }, { id: 'asc' as const }] : [{ name: 'asc' as const }, { id: 'asc' as const }];
+    const [customers, total] = await Promise.all([
+      prisma.customer.findMany({ where, orderBy, skip: paging.skip, take: paging.take }),
+      prisma.customer.count({ where }),
+    ]);
+    sendPage(res, customers, total);
   })
 );
 

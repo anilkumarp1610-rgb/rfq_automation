@@ -10,6 +10,7 @@ import { withRfqNumber } from '../lib/rfqNumber.js';
 import { loadRfqVersionFull } from '../lib/rfqInclude.js';
 import { analyzeDrawing, aiConfigured } from '../spec-analysis/analyze.js';
 import { partNumberFromFilename } from '../spec-analysis/filenamePart.js';
+import { isPlaceholderGrade, matchGrade } from '../spec-analysis/grade.js';
 import { deriveWeights } from '../spec-analysis/weights.js';
 import { persistSpec } from '../spec-analysis/persist.js';
 import { suggestProcessLines } from '../spec-analysis/suggestLines.js';
@@ -18,7 +19,6 @@ import { runCompute } from '../cost-engine/run.js';
 const router = Router();
 router.use(authenticateToken);
 
-const GRADE_PLACEHOLDER = /as per|bom|standard|tbd|n\/?a|refer/i;
 const num = (v: unknown): number | null => {
   if (v === null || v === undefined) return null;
   const n = Number(v);
@@ -68,14 +68,13 @@ router.post(
         })
       : null;
 
-    const materialNote = extract.header.materialNote?.trim() || null;
-    const gradeReal = materialNote && !GRADE_PLACEHOLDER.test(materialNote);
-    const gradeMatch = gradeReal
-      ? await prisma.materialCategory.findFirst({
-          where: { isActive: true, gradeCode: { equals: materialNote! } },
-          include: { materialType: true },
-        })
-      : null;
+    // What the drawing says about the material: the printed grade first, else the general note.
+    const gradeText = extract.header.materialGrade?.trim() || null;
+    const materialNote = gradeText || extract.header.materialNote?.trim() || null;
+    const grades = isPlaceholderGrade(materialNote)
+      ? []
+      : await prisma.materialCategory.findMany({ where: { isActive: true }, include: { materialType: true } });
+    const gradeMatch = matchGrade(materialNote, grades);
 
     const roundBar = await prisma.materialShape.findFirst({
       where: { isActive: true, name: { contains: 'Round' } },
@@ -83,7 +82,7 @@ router.post(
 
     res.json({
       partNumber,
-      partName: extract.header.title?.trim() || null,
+      partName: extract.header.itemName?.trim() || extract.header.title?.trim() || null,
       revision: extract.header.revision?.trim() || 'R00',
       productType: extract.header.productType?.trim() || null,
       materialNote,
@@ -92,6 +91,7 @@ router.post(
       weights,
       flags: extract.flags,
       mock: extract.mock,
+      source: extract.source,
       aiConfigured: aiConfigured(),
       extract, // opaque — passed straight back to /from-spec
       existing: latestRfq
@@ -143,13 +143,25 @@ router.post(
     let customerId = b.customerId ? BigInt(b.customerId) : null;
     let createdCustomer = false;
     if (!customerId && b.newCustomerName) {
-      const code =
-        b.newCustomerName.replace(/[^A-Za-z0-9]/g, '').slice(0, 12).toUpperCase() ||
-        `CUST${Date.now().toString().slice(-6)}`;
-      const c = await prisma.customer.create({ data: { code, name: b.newCustomerName, rating: 3 } });
-      customerId = c.id;
-      createdCustomer = true;
-      await audit(req, { entityType: 'Customer', entityId: c.id, action: 'CREATE', changes: { via: 'spec-wizard' } });
+      // Same name already on file (e.g. the wizard re-run for the same drawing) -> reuse it.
+      const sameName = await prisma.customer.findFirst({ where: { name: b.newCustomerName } });
+      if (sameName) {
+        customerId = sameName.id;
+      } else {
+        // The code is derived from the name, so two different names can share a prefix —
+        // add a numeric suffix until the (unique) code is free.
+        const base =
+          b.newCustomerName.replace(/[^A-Za-z0-9]/g, '').slice(0, 12).toUpperCase() ||
+          `CUST${Date.now().toString().slice(-6)}`;
+        let code = base;
+        for (let n = 2; await prisma.customer.findUnique({ where: { code } }); n++) {
+          code = `${base.slice(0, 12 - String(n).length)}${n}`;
+        }
+        const c = await prisma.customer.create({ data: { code, name: b.newCustomerName, rating: 3 } });
+        customerId = c.id;
+        createdCustomer = true;
+        await audit(req, { entityType: 'Customer', entityId: c.id, action: 'CREATE', changes: { via: 'spec-wizard' } });
+      }
     }
     if (!customerId) badRequest('Select an existing customer or provide a new customer name');
 
@@ -286,7 +298,7 @@ router.post(
       b.extract.items.find((i) => i.itemType === 'SURFACE_FINISH')?.label ??
       b.extract.items.find((i) => i.itemType === 'SURFACE_FINISH')?.rawText ??
       null;
-    const materialNote = b.extract.header.materialNote?.trim() || null;
+    const materialNote = b.extract.header.materialGrade?.trim() || b.extract.header.materialNote?.trim() || null;
     const attrData: Record<string, unknown> = {
       sourcingType: b.sourcingType,
       purchasePricePerPc: boughtOut ? (b.purchasePricePerPc ?? null) : null,
@@ -321,6 +333,7 @@ router.post(
       weights,
       createdBy: uid,
       mock: b.mock,
+      source: b.source,
     });
     await audit(req, {
       entityType: 'SpecAnalysis',

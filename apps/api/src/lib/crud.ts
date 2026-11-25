@@ -4,6 +4,7 @@ import { authenticateToken, canEditMasters, AuthRequest } from '../middleware/au
 import { validateBody } from './validate.js';
 import { ah, bigIntParam, notFound } from './http.js';
 import { audit } from './audit.js';
+import { parsePaging, sendPage } from './paging.js';
 
 /**
  * Prisma model delegates carry heavily-overloaded signatures that don't unify
@@ -72,12 +73,18 @@ export function crudRouter(getDelegate: () => Delegate, opts: CrudOptions): Rout
         const v = req.query[f];
         if (typeof v === 'string' && /^\d+$/.test(v)) where[f] = BigInt(v);
       }
-      const rows = await getDelegate().findMany({
-        where,
-        orderBy: opts.orderBy,
-        include: opts.include,
-      });
-      res.json(rows);
+      const paging = parsePaging(req.query);
+      if (!paging) {
+        const rows = await getDelegate().findMany({ where, orderBy: opts.orderBy, include: opts.include });
+        return res.json(rows);
+      }
+      // ?sort=<column>: Prisma rejects an unknown column (-> 400); id keeps page boundaries stable
+      const orderBy = paging.sort ? [{ [paging.sort]: paging.dir }, { id: 'asc' }] : opts.orderBy;
+      const [rows, total] = await Promise.all([
+        getDelegate().findMany({ where, orderBy, include: opts.include, skip: paging.skip, take: paging.take }),
+        getDelegate().count({ where }),
+      ]);
+      sendPage(res, rows, total);
     })
   );
 

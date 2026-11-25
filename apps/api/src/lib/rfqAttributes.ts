@@ -1,5 +1,6 @@
 import { RfqPartAttributesInput } from '@rfq/shared';
-import { bigIntOrNull } from './http.js';
+import { bigIntOrNull, badRequest } from './http.js';
+import { prisma } from './prisma.js';
 
 /**
  * Map the shared `RfqPartAttributesInput` onto Prisma `RfqPartAttributes` data.
@@ -27,4 +28,22 @@ export function toPartAttributesData(input: RfqPartAttributesInput): Record<stri
   if (has('reviewed')) out.reviewed = !!input.reviewed;
 
   return out;
+}
+
+/**
+ * The category / shape / product-type columns are real foreign keys, so an unknown id would fail
+ * with a bare constraint error. Check up front and say which reference is wrong (422).
+ */
+export async function assertAttributeRefsExist(data: Record<string, unknown>): Promise<void> {
+  const checks: [string, string, () => Promise<unknown>][] = [];
+  const id = (k: string) => data[k] as bigint | null | undefined;
+  if (id('materialCategoryId'))
+    checks.push(['materialCategoryId', 'material grade', () => prisma.materialCategory.findUnique({ where: { id: id('materialCategoryId')! } })]);
+  if (id('materialShapeId'))
+    checks.push(['materialShapeId', 'material shape', () => prisma.materialShape.findUnique({ where: { id: id('materialShapeId')! } })]);
+  if (id('productTypeId'))
+    checks.push(['productTypeId', 'product type', () => prisma.productType.findUnique({ where: { id: id('productTypeId')! } })]);
+  for (const [, label, find] of checks) {
+    if (!(await find())) badRequest(`Unknown ${label} — pick one from the list`, 422);
+  }
 }

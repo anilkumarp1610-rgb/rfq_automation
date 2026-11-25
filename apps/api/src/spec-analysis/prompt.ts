@@ -11,9 +11,11 @@ Return ONE JSON object and nothing else — no prose, no markdown fences:
 
 {
   "header": {
-    "drawingNo": string|null, "title": string|null, "customerName": string|null,
+    "drawingNo": string|null, "title": string|null, "itemName": string|null,
+    "customerName": string|null,
     "coNo": string|null, "revision": string|null, "sheetSize": string|null,
-    "scale": string|null, "materialNote": string|null,
+    "scale": string|null, "materialNote": string|null, "materialGrade": string|null,
+    "units": "mm"|"inch"|null,
     "designedBy": string|null, "detailedBy": string|null, "checkedBy": string|null,
     "drawnDate": string|null, "productType": string|null,
     "overallLengthMm": number|null, "maxOdMm": number|null, "acrossFlatsMm": number|null,
@@ -42,6 +44,23 @@ Return ONE JSON object and nothing else — no prose, no markdown fences:
 }
 
 RULES
+- Every drawing is different: read THIS drawing's own title block. Never reuse values you
+  would expect from another drawing, and never fill a field with a typical-looking guess.
+- header.itemName = the NAME of the part exactly as printed in the title block — the field
+  labelled TITLE, ITEM NAME, PART NAME, NAME or DESCRIPTION of the part (e.g. "BRUSH HOLDER",
+  "SHAFT"). Do not build it from the dimensions. If the only text is a stock description such
+  as 'ROUND BAR: 2 1/2" DIA X 49 1/8" LG.', put that in header.notes and leave itemName null
+  unless a real part name is printed elsewhere. header.title is the drawing's overall title.
+- header.materialGrade = the material grade exactly as printed in the MATERIAL field / column
+  of the title block or bill of materials (e.g. "304L SS", "EN8", "SS316", "C45", "EN19").
+  Copy it verbatim; do not translate or normalise it. header.materialNote = any longer
+  material/heat-treatment wording (e.g. "NORMALISED, 18CRNIMO7-6 TO DIN 10084").
+- Units: set header.units to "inch" if the drawing is dimensioned in inches (fractions such as
+  2 1/2", decimals marked in inches, tolerance table in inches), otherwise "mm". The fields
+  overallLengthMm / maxOdMm / acrossFlatsMm and every item.nominalValue, tolUpper and tolLower
+  MUST be in millimetres — multiply inch values by 25.4 (2 1/2" -> 63.5). Keep the label and
+  rawText as printed, and set item.unit to "mm".
+- header.drawingNo = the drawing / part number printed in the title block (e.g. "CB60931").
 - Capture ONLY what is on the drawing. Use null for anything absent. Never invent values.
 - Every diameter, length, thread, hole, chamfer, undercut, groove, surface-finish
   symbol, GD&T frame, general tolerance and title-block fact becomes an item or a
@@ -53,8 +72,9 @@ RULES
 - Across-flats / hex sizes -> itemType "ACROSS_FLATS" AND header.acrossFlatsMm.
 - GD&T -> itemType "GDT", gdtType = the control, datum = the datum letters,
   nominalValue = the tolerance zone value if given.
-- If material is shown as "AS PER BOM", "AS PER STANDARD" or similar, set
-  header.materialNote to that text and add a flag: "Material not specified on drawing".
+- If the material is shown only as "AS PER BOM", "AS PER STANDARD" or similar (no real grade),
+  set header.materialNote to that text, leave materialGrade null, and add a flag:
+  "Material not specified on drawing". If a grade IS printed, never flag it as missing.
 - Add a flag for any unreadable, contradictory or missing critical dimension.
 - confidence: 1.0 = printed and unambiguous, 0.5 = inferred, <=0.3 = a guess.
 

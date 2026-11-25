@@ -11,8 +11,7 @@ import { analyzeDrawing, aiConfigured } from '../spec-analysis/analyze.js';
 import { deriveWeights } from '../spec-analysis/weights.js';
 import { persistSpec } from '../spec-analysis/persist.js';
 import { audit } from '../lib/audit.js';
-
-const UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
+import { UPLOAD_DIR } from '../lib/upload.js';
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -35,7 +34,7 @@ async function loadVersionCtx(id: bigint) {
     where: { id },
     include: {
       rfq: { include: { customerPart: true } },
-      partAttributes: true,
+      partAttributes: { include: { materialCategory: true } },
       attachments: { orderBy: { uploadedAt: 'desc' } },
     },
   });
@@ -223,12 +222,8 @@ router.post(
 
     // density for weight derivation
     let density = 7850;
-    if (version.partAttributes?.materialCategoryId) {
-      const cat = await prisma.materialCategory.findUnique({
-        where: { id: version.partAttributes.materialCategoryId },
-      });
-      if (cat?.densityKgM3) density = Number(cat.densityKgM3);
-    }
+    const cat = version.partAttributes?.materialCategory;
+    if (cat?.densityKgM3) density = Number(cat.densityKgM3);
     const weights = deriveWeights(extract, density);
 
     const spec = await persistSpec({
@@ -240,6 +235,7 @@ router.post(
       weights,
       createdBy: userId(req),
       mock: extract.mock,
+      source: extract.source,
     });
 
     await audit(req, {
@@ -248,7 +244,7 @@ router.post(
       action: 'ANALYZE',
       changes: { revision, itemCount: extract.items.length, mock: extract.mock, weights },
     });
-    res.status(201).json({ spec, weights, flags: extract.flags, mock: extract.mock, aiConfigured: aiConfigured() });
+    res.status(201).json({ spec, weights, flags: extract.flags, mock: extract.mock, source: extract.source, aiConfigured: aiConfigured() });
   })
 );
 

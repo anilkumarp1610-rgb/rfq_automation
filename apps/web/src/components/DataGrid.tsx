@@ -20,8 +20,24 @@ export interface GridColumn<T> {
   sortValue?: (row: T) => unknown
   /** disable sorting on this column */
   noSort?: boolean
+  /** server mode: the field name sent as `sort` to the API (defaults to `key`) */
+  sortKey?: string
   align?: 'left' | 'right'
   className?: string
+}
+
+export type GridSort = { key: string; dir: 'asc' | 'desc' } | null
+
+/**
+ * Server-side mode: the parent fetches ONE page and owns the paging / sorting state. `page` is
+ * 0-based. `rows` is then just the current page; `total` is the full filtered count.
+ */
+export interface ServerPaging {
+  page: number
+  pageSize: number
+  total: number
+  sort: GridSort
+  onChange: (next: { page: number; pageSize: number; sort: GridSort }) => void
 }
 
 interface DataGridProps<T> {
@@ -36,6 +52,8 @@ interface DataGridProps<T> {
   pageSize?: number
   /** rendered above the table (search, filters) */
   toolbar?: ReactNode
+  /** omit for the classic client-side sort + pagination over `rows` */
+  server?: ServerPaging
 }
 
 const PAGE_SIZES = [10, 25, 50, 100]
@@ -67,33 +85,49 @@ export default function DataGrid<T>({
   emptyText = 'No records.',
   pageSize: initialPageSize = 10,
   toolbar,
+  server,
 }: DataGridProps<T>) {
-  const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(null)
-  const [pageSize, setPageSize] = useState(initialPageSize)
-  const [page, setPage] = useState(0)
+  const [localSort, setLocalSort] = useState<GridSort>(null)
+  const [localPageSize, setLocalPageSize] = useState(initialPageSize)
+  const [localPage, setLocalPage] = useState(0)
+
+  // In server mode the parent owns this state; otherwise the grid does.
+  const sort = server ? server.sort : localSort
+  const pageSize = server ? server.pageSize : localPageSize
+  const page = server ? server.page : localPage
+  const sortKeyOf = (c: GridColumn<T>) => c.sortKey ?? c.key
 
   const sorted = useMemo(() => {
-    if (!sort) return rows
+    if (server || !sort) return rows
     const col = columns.find((c) => c.key === sort.key)
     if (!col) return rows
     const val = col.sortValue ?? ((r: T) => (r as Record<string, unknown>)[sort.key])
     const dir = sort.dir === 'asc' ? 1 : -1
     return [...rows].sort((a, b) => compare(val(a), val(b)) * dir)
-  }, [rows, sort, columns])
+  }, [rows, sort, columns, server])
 
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
+  const totalRows = server ? server.total : sorted.length
+  const pageCount = Math.max(1, Math.ceil(totalRows / pageSize))
   useEffect(() => {
-    if (page > pageCount - 1) setPage(0)
-  }, [page, pageCount])
+    if (page > pageCount - 1) {
+      if (server) server.onChange({ page: 0, pageSize, sort })
+      else setLocalPage(0)
+    }
+  }, [page, pageCount, server, pageSize, sort])
 
   const start = page * pageSize
-  const pageRows = sorted.slice(start, start + pageSize)
+  const pageRows = server ? rows : sorted.slice(start, start + pageSize)
   const colSpan = columns.length + (actions ? 1 : 0)
 
-  const toggleSort = (key: string) =>
-    setSort((s) =>
-      s?.key !== key ? { key, dir: 'asc' } : s.dir === 'asc' ? { key, dir: 'desc' } : null
-    )
+  const setPage = (p: number) => (server ? server.onChange({ page: p, pageSize, sort }) : setLocalPage(p))
+  const setPageSize = (n: number) =>
+    server ? server.onChange({ page: 0, pageSize: n, sort }) : (setLocalPageSize(n), setLocalPage(0))
+  const toggleSort = (key: string) => {
+    const next: GridSort =
+      sort?.key !== key ? { key, dir: 'asc' } : sort.dir === 'asc' ? { key, dir: 'desc' } : null
+    if (server) server.onChange({ page: 0, pageSize, sort: next })
+    else setLocalSort(next)
+  }
 
   return (
     <div className="space-y-3">
@@ -103,7 +137,7 @@ export default function DataGrid<T>({
           <TableHeader>
             <TableRow>
               {columns.map((c) => {
-                const active = sort?.key === c.key
+                const active = sort?.key === sortKeyOf(c)
                 return (
                   <TableHead key={c.key} className={cn(c.align === 'right' && 'text-right', c.className)}>
                     {c.noSort ? (
@@ -111,7 +145,7 @@ export default function DataGrid<T>({
                     ) : (
                       <button
                         className="inline-flex items-center gap-1 hover:text-foreground"
-                        onClick={() => toggleSort(c.key)}
+                        onClick={() => toggleSort(sortKeyOf(c))}
                       >
                         {c.header}
                         {active ? (
@@ -165,19 +199,16 @@ export default function DataGrid<T>({
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
         <div>
-          {sorted.length === 0
+          {totalRows === 0
             ? '0 of 0'
-            : `${start + 1}–${Math.min(start + pageSize, sorted.length)} of ${sorted.length}`}
+            : `${start + 1}–${Math.min(start + pageSize, totalRows)} of ${totalRows}`}
         </div>
         <div className="flex items-center gap-2">
           <span>Rows</span>
           <Select
             className="h-9 w-[4.75rem] px-2 py-0"
             value={String(pageSize)}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value))
-              setPage(0)
-            }}
+            onChange={(e) => setPageSize(Number(e.target.value))}
           >
             {PAGE_SIZES.map((n) => (
               <option key={n} value={n}>
@@ -189,7 +220,7 @@ export default function DataGrid<T>({
             variant="outline"
             size="sm"
             disabled={page === 0}
-            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            onClick={() => setPage(Math.max(0, page - 1))}
           >
             Prev
           </Button>
@@ -200,7 +231,7 @@ export default function DataGrid<T>({
             variant="outline"
             size="sm"
             disabled={page >= pageCount - 1}
-            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            onClick={() => setPage(Math.min(pageCount - 1, page + 1))}
           >
             Next
           </Button>

@@ -3,8 +3,9 @@ import { customerPartSchema } from '@rfq/shared';
 import { prisma } from '../lib/prisma.js';
 import { authenticateToken, canEditRfq, AuthRequest } from '../middleware/auth.js';
 import { validateBody } from '../lib/validate.js';
-import { ah, bigIntParam, notFound, withBigInts } from '../lib/http.js';
+import { ah, bigIntParam, notFound, withBigInts, badRequest } from '../lib/http.js';
 import { audit } from '../lib/audit.js';
+import { parsePaging, sendPage } from '../lib/paging.js';
 
 const router = Router();
 router.use(authenticateToken);
@@ -16,23 +17,41 @@ router.get(
   ah(async (req: AuthRequest, res: Response) => {
     const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
     const customerId = typeof req.query.customerId === 'string' ? req.query.customerId : undefined;
-    const parts = await prisma.customerPart.findMany({
-      where: {
-        ...(customerId ? { customerId: BigInt(customerId) } : {}),
-        ...(search
-          ? {
-              OR: [
-                { customerPartNumber: { contains: search } },
-                { partName: { contains: search } },
-                { drawingNo: { contains: search } },
-              ],
-            }
-          : {}),
-      },
-      include: { customer: true, productType: true, _count: { select: { rfqs: true } } },
-      orderBy: { updatedAt: 'desc' },
-    });
-    res.json(parts);
+    const where = {
+      ...(customerId ? { customerId: BigInt(customerId) } : {}),
+      ...(search
+        ? {
+            OR: [
+              { customerPartNumber: { contains: search } },
+              { partName: { contains: search } },
+              { drawingNo: { contains: search } },
+            ],
+          }
+        : {}),
+    };
+    const include = { customer: true, productType: true, _count: { select: { rfqs: true } } } as const;
+
+    const paging = parsePaging(req.query);
+    if (!paging) {
+      return res.json(await prisma.customerPart.findMany({ where, include, orderBy: { updatedAt: 'desc' } }));
+    }
+    const dir = paging.dir;
+    const sorts: Record<string, object> = {
+      customerPartNumber: { customerPartNumber: dir },
+      partName: { partName: dir },
+      drawingNo: { drawingNo: dir },
+      currentRevision: { currentRevision: dir },
+      updatedAt: { updatedAt: dir },
+      customer: { customer: { code: dir } },
+      productType: { productType: { name: dir } },
+    };
+    if (paging.sort && !(paging.sort in sorts)) badRequest(`Cannot sort parts by "${paging.sort}"`, 422);
+    const orderBy = [paging.sort ? sorts[paging.sort] : { updatedAt: 'desc' as const }, { id: 'desc' as const }];
+    const [parts, total] = await Promise.all([
+      prisma.customerPart.findMany({ where, include, orderBy, skip: paging.skip, take: paging.take }),
+      prisma.customerPart.count({ where }),
+    ]);
+    sendPage(res, parts, total);
   })
 );
 

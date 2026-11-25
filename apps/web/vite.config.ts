@@ -18,7 +18,8 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        // overridable so the browser tests can point at their own API (e2e/) instead of the dev one
+        target: process.env.API_PROXY_TARGET || 'http://localhost:4000',
         changeOrigin: true,
         rewrite: (p) => p.replace(/^\/api/, ''),
       },

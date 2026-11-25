@@ -54,10 +54,29 @@ export function resource<T = any>(path: string) {
   return {
     list: (params?: Record<string, unknown>) =>
       apiClient.get<T[]>(path, { params }).then((r) => r.data),
+    /** One page of rows plus the full (filtered) count from the X-Total-Count header. */
+    listPaged: (params: Record<string, unknown>) =>
+      apiClient.get<T[]>(path, { params }).then((r) => ({
+        rows: r.data,
+        total: Number(r.headers['x-total-count'] ?? r.data.length),
+      })),
     get: (id: string) => apiClient.get<T>(`${path}/${id}`).then((r) => r.data),
     create: (body: unknown) => apiClient.post<T>(path, body).then((r) => r.data),
     update: (id: string, body: unknown) =>
       apiClient.put<T>(`${path}/${id}`, body).then((r) => r.data),
     remove: (id: string) => apiClient.delete(`${path}/${id}`).then((r) => r.data),
+  }
+}
+
+/** What a server-paged list sends to the API: `page` is 1-based there, 0-based in the grid. */
+export function pagingParams(s: {
+  page: number
+  pageSize: number
+  sort: { key: string; dir: 'asc' | 'desc' } | null
+}) {
+  return {
+    page: s.page + 1,
+    pageSize: s.pageSize,
+    ...(s.sort ? { sort: s.sort.key, dir: s.sort.dir } : {}),
   }
 }

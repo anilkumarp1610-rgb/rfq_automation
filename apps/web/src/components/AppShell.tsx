@@ -14,6 +14,7 @@ import {
   Sun,
   Moon,
   User,
+  FlaskConical,
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -170,6 +171,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           {canEditRfq && (
             <NavLink to="/customer-parts" className={navLinkClass}>
               <Package className="h-4 w-4" /> Customer Parts
+            </NavLink>
+          )}
+          {canEditRfq && (
+            <NavLink to="/test-drawings" className={navLinkClass}>
+              <FlaskConical className="h-4 w-4" /> Test Drawings
             </NavLink>
           )}
 

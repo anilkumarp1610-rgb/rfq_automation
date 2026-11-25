@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import { authenticateToken, requireRole, AuthRequest } from '../middleware/auth.js';
 import { prisma } from '../lib/prisma.js';
 import { ah } from '../lib/http.js';
+import { parsePaging } from '../lib/paging.js';
 
 const router = Router();
 router.use(authenticateToken, requireRole('ADMIN', 'MANAGER'));
@@ -11,17 +12,34 @@ router.get(
   '/',
   ah(async (req: AuthRequest, res: Response) => {
     const { entityType, entityId, action } = req.query as Record<string, string | undefined>;
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const where = {
+      ...(entityType ? { entityType } : {}),
+      ...(entityId && /^\d+$/.test(entityId) ? { entityId: BigInt(entityId) } : {}),
+      ...(action ? { action } : {}),
+    };
 
-    const rows = await prisma.auditLog.findMany({
-      where: {
-        ...(entityType ? { entityType } : {}),
-        ...(entityId && /^\d+$/.test(entityId) ? { entityId: BigInt(entityId) } : {}),
-        ...(action ? { action } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
-    });
+    // Paged (?page=&pageSize=): one page, newest first, total in X-Total-Count.
+    // Unpaged: the original behaviour (?limit=, default 100, max 500).
+    const paging = parsePaging(req.query);
+    const [rows, total] = paging
+      ? await Promise.all([
+          prisma.auditLog.findMany({
+            where,
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+            skip: paging.skip,
+            take: paging.take,
+          }),
+          prisma.auditLog.count({ where }),
+        ])
+      : [
+          await prisma.auditLog.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            take: Math.min(Number(req.query.limit) || 100, 500),
+          }),
+          null,
+        ];
+    if (total !== null) res.setHeader('X-Total-Count', String(total));
 
     const userIds = [...new Set(rows.map((r) => r.createdBy).filter((v): v is bigint => v != null))];
     const users = await prisma.user.findMany({

@@ -60,7 +60,7 @@ export default function CreateRfqWizard() {
     try {
       const fd = new FormData()
       fd.append('file', picked)
-      const p = await apiClient.post('/rfqs/spec-preview', fd).then((r) => r.data)
+      const p = await apiClient.post('/rfqs/spec-preview', fd, { timeout: 300_000 }).then((r) => r.data)
       setPreview(p)
       set({
         partNumber: p.partNumber ?? '',
@@ -92,6 +92,7 @@ export default function CreateRfqWizard() {
       const payload = {
         extract: preview.extract,
         mock: preview.mock,
+        source: preview.source,
         partNumber: f.partNumber,
         partName: f.partName,
         revision: f.revision,
@@ -116,7 +117,7 @@ export default function CreateRfqWizard() {
       const fd = new FormData()
       fd.append('file', file)
       fd.append('payload', JSON.stringify(payload))
-      const res = await apiClient.post('/rfqs/from-spec', fd).then((r) => r.data)
+      const res = await apiClient.post('/rfqs/from-spec', fd, { timeout: 300_000 }).then((r) => r.data)
       setResult(res)
       setStep(4)
       toast.success(res.isNewRevision ? `Revision R${res.revisionNo} created` : `RFQ ${res.rfqNumber} created`)
@@ -199,10 +200,18 @@ export default function CreateRfqWizard() {
       {step === 2 && preview && (
         <div className="space-y-4">
           {preview.mock && (
-            <div className="text-xs text-muted-foreground bg-muted rounded-md p-3">
-              <Badge variant="secondary">mock extraction</Badge> No <code>ANTHROPIC_API_KEY</code>{' '}
-              configured — values below are illustrative. Set a key in <code>apps/api/.env</code> for
-              real extraction.
+            <div className="rounded-md border border-red-300 bg-red-50 p-3 text-sm text-red-800">
+              <Badge variant="warning">SAMPLE DATA</Badge> These values are <b>not read from your drawing</b> — every
+              file returns the same canned shaft. Set a real <code>ANTHROPIC_API_KEY</code> in{' '}
+              <code>apps/api/.env</code>, remove <code>SPEC_ALLOW_MOCK</code> and restart the API.
+            </div>
+          )}
+
+          {preview.source === 'text' && (
+            <div className="rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
+              <Badge variant="secondary">READ FROM PDF TEXT</Badge> No AI was used. The drawing number, item name, material
+              grade, units and the “Ø × length” size were read from the PDF’s own text — <b>please check them</b>.
+              Dimensions and tolerances were not read; add Anthropic credit for the full AI reading.
             </div>
           )}
 
@@ -244,7 +253,7 @@ export default function CreateRfqWizard() {
               <Field label="Customer part number" required>
                 <Input value={f.partNumber} onChange={(e) => set({ partNumber: e.target.value })} />
               </Field>
-              <Field label="Part name" required>
+              <Field label="Part / item name (from the drawing)" required>
                 <Input value={f.partName} onChange={(e) => set({ partName: e.target.value })} />
               </Field>
               <Field label="Drawing revision">
@@ -350,6 +359,12 @@ export default function CreateRfqWizard() {
                         </option>
                       ))}
                     </Select>
+                    {preview.materialNote && !f.materialCategoryId && (
+                      <p className="mt-1 text-xs text-amber-600">
+                        The drawing says “{preview.materialNote}”, which matches no grade in the Material Master —
+                        pick one above, or add it under Masters → Material Master.
+                      </p>
+                    )}
                   </Field>
                   <Field label="Stock shape">
                     <Select

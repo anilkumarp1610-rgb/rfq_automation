@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react'
-import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Pencil, Trash2, Search, ChevronRight } from 'lucide-react'
 import { toast } from 'sonner'
-import { resource, apiError } from '@/lib/api'
+import { resource, apiError, pagingParams } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, Textarea } from '@/components/ui/field'
 import { Badge } from '@/components/ui/badge'
-import DataGrid, { type GridColumn } from '@/components/DataGrid'
+import DataGrid, { type GridColumn, type GridSort } from '@/components/DataGrid'
 import {
   Dialog,
   DialogContent,
@@ -76,9 +76,27 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
     ...(config.searchable && search ? { search } : {}),
     ...(scope ? { [scope.field]: scope.id } : {}),
   })
+  // Server-paged masters send one page; the rest fetch everything and page in the browser.
+  const serverPaged = !!config.serverPaging
+  const [paging, setPaging] = useState<{ page: number; pageSize: number; sort: GridSort }>({
+    page: 0,
+    pageSize: 25,
+    sort: null,
+  })
   const listQuery = useQuery({
-    queryKey: ['master', config.key, scope?.id ?? '', config.searchable ? search : ''],
-    queryFn: () => api.list(listParams()),
+    queryKey: [
+      'master',
+      config.key,
+      scope?.id ?? '',
+      config.searchable ? search : '',
+      ...(serverPaged ? [paging] : []),
+    ],
+    queryFn: async () => {
+      if (serverPaged) return api.listPaged({ ...listParams(), ...pagingParams(paging) })
+      const all = await api.list(listParams())
+      return { rows: all, total: all.length }
+    },
+    placeholderData: serverPaged ? keepPreviousData : undefined,
   })
 
   // Fetch option lists for every distinct select-with-resource field.
@@ -155,7 +173,7 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
     return []
   }
 
-  const rows = (listQuery.data as Row[]) ?? []
+  const rows = (listQuery.data?.rows as Row[]) ?? []
   const drilldowns = config.drilldowns ?? []
   const hasActions = canEdit || (drilldowns.length > 0 && !!onDrill)
 
@@ -163,6 +181,12 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
     ...tableFields.map((f) => ({
       key: f.name,
       header: f.label,
+      // server mode: only columns the API can order by are sortable, under the API's own key
+      ...(serverPaged
+        ? config.serverPaging!.sortKeys[f.name]
+          ? { sortKey: config.serverPaging!.sortKeys[f.name] }
+          : { noSort: true }
+        : {}),
       cell: (row: Row) => renderCell(f, row),
       sortValue: (row: Row) => {
         const v = row[f.name]
@@ -181,6 +205,11 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
       key: '_status',
       header: 'Status',
       className: 'w-24',
+      ...(serverPaged
+        ? config.serverPaging!.sortKeys['_status']
+          ? { sortKey: config.serverPaging!.sortKeys['_status'] }
+          : { noSort: true }
+        : {}),
       sortValue: (row: Row) => (row.isActive === false ? 1 : 0),
       cell: (row: Row) =>
         row.isActive === undefined ? (
@@ -212,6 +241,11 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
         rows={rows}
         getRowKey={(row) => String(row.id)}
         loading={listQuery.isLoading}
+        server={
+          serverPaged
+            ? { ...paging, total: listQuery.data?.total ?? 0, onChange: setPaging }
+            : undefined
+        }
         toolbar={
           config.searchable ? (
             <div className="relative max-w-xs">
@@ -220,7 +254,10 @@ export default function MasterPage({ config, scope, onDrill, embedded }: MasterP
                 className="pl-8"
                 placeholder="Search…"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setPaging((p) => ({ ...p, page: 0 }))
+                }}
               />
             </div>
           ) : undefined

@@ -22,8 +22,13 @@ export async function nextRfqNumber(now = new Date()): Promise<string> {
   return `${year}/${mm}/${pad4(max + 1)}`;
 }
 
-/** Run `fn` with a fresh RFQ number, retrying on a unique-collision. */
-export async function withRfqNumber<T>(fn: (rfqNumber: string) => Promise<T>): Promise<T> {
+/** Run `fn` with a fresh RFQ number (or the explicit one), retrying only auto-numbers on a unique-collision. */
+export async function withRfqNumber<T>(
+  fn: (rfqNumber: string) => Promise<T>,
+  explicit?: string | null
+): Promise<T> {
+  // A caller-supplied number is used as-is: a collision is the caller's error, so retrying is pointless.
+  if (explicit) return fn(explicit);
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       return await fn(await nextRfqNumber());

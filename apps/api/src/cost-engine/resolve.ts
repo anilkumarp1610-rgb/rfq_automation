@@ -25,7 +25,7 @@ function loadVersion(id: bigint) {
   return prisma.rfqVersion.findUnique({
     where: { id },
     include: {
-      partAttributes: true,
+      partAttributes: { include: { materialCategory: true } },
       materials: true,
       processes: { include: { process: true, machine: true }, orderBy: { sequence: 'asc' } },
       rfq: { include: { customerPart: { include: { customer: true } } } },
@@ -214,13 +214,7 @@ export async function resolveEngineInput(
 
   const material = boughtOut ? null : await resolveMaterial(version, asOfDate, warnings);
 
-  let materialTypeId: bigint | null = null;
-  if (attrs?.materialCategoryId) {
-    const cat = await prisma.materialCategory.findUnique({
-      where: { id: attrs.materialCategoryId },
-    });
-    materialTypeId = cat?.materialTypeId ?? null;
-  }
+  const materialTypeId: bigint | null = attrs?.materialCategory?.materialTypeId ?? null;
   const handling = await resolveHandling(materialTypeId, asOfDate, warnings);
 
   const qc = await resolveQc(asOfDate, warnings);

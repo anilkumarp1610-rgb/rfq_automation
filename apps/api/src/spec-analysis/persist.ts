@@ -26,6 +26,7 @@ export interface PersistSpecParams {
   weights: DerivedWeights;
   createdBy: bigint | null;
   mock: boolean;
+  source?: 'ai' | 'text' | 'sample';
 }
 
 /**
@@ -38,13 +39,15 @@ export async function persistSpec(p: PersistSpecParams) {
     rfqVersionId: p.rfqVersionId,
     attachmentId: p.attachmentId,
     drawingNo: h.drawingNo ?? null,
-    title: h.title ?? null,
+    // the part's own name ("BRUSH HOLDER") when the drawing prints one, else the drawing title
+    title: h.itemName?.trim() || h.title || null,
     customerName: h.customerName ?? null,
     coNo: h.coNo ?? null,
     revision: p.revision,
     sheetSize: h.sheetSize ?? null,
     scale: h.scale ?? null,
-    materialNote: h.materialNote ?? null,
+    // the printed grade ("304L SS") when there is one, else the general material wording
+    materialNote: h.materialGrade?.trim() || h.materialNote || null,
     designedBy: h.designedBy ?? null,
     detailedBy: h.detailedBy ?? null,
     checkedBy: h.checkedBy ?? null,
@@ -58,7 +61,7 @@ export async function persistSpec(p: PersistSpecParams) {
     notes: h.notes ?? null,
     estNetWeightKg: p.weights.estNetWeightKg,
     estInputWeightKg: p.weights.estInputWeightKg,
-    rawExtract: JSON.stringify({ ...p.extract, _weights: p.weights, _mock: p.mock }),
+    rawExtract: JSON.stringify({ ...p.extract, _weights: p.weights, _mock: p.mock, _source: p.source ?? (p.mock ? 'sample' : 'ai') }),
     overallConfidence: avgConfidence(p.extract.items, h.confidence),
     reviewed: false,
   };

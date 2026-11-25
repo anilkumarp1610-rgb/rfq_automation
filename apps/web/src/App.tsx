@@ -7,6 +7,7 @@ import DashboardPage from './pages/Dashboard'
 import AuditLogPage from './pages/AuditLog'
 import CompanySettingsPage from './pages/CompanySettings'
 import SecurityPage from './pages/Security'
+import TestDrawingsPage from './pages/TestDrawings'
 import RfqListPage from './features/rfqs/RfqListPage'
 import RfqDetailPage from './features/rfqs/RfqDetailPage'
 import CreateRfqWizard from './features/rfqs/CreateRfqWizard'
@@ -40,6 +41,7 @@ export default function App() {
             />
             <Route path="/masters/:group" element={protect(<MasterGroupPage />, 'masters')} />
             <Route path="/masters/:group/:tab" element={protect(<MasterGroupPage />, 'masters')} />
+            <Route path="/test-drawings" element={protect(<TestDrawingsPage />, 'rfq')} />
             <Route path="/audit-log" element={protect(<AuditLogPage />)} />
             <Route path="/company" element={protect(<CompanySettingsPage />)} />
             <Route path="/security" element={protect(<SecurityPage />)} />

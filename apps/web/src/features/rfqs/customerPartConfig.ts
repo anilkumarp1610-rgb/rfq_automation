@@ -9,6 +9,16 @@ export const customerPartConfig: MasterConfig = {
   searchable: true,
   hideDelete: true,
   editableByEstimator: true,
+  serverPaging: {
+    sortKeys: {
+      customerId: 'customer',
+      customerPartNumber: 'customerPartNumber',
+      partName: 'partName',
+      productTypeId: 'productType',
+      drawingNo: 'drawingNo',
+      currentRevision: 'currentRevision',
+    },
+  },
   fields: [
     {
       name: 'customerId',

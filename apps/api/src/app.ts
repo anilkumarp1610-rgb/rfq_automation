@@ -1,0 +1,94 @@
+import { isProd } from './lib/env.js'; // must stay first: loads .env + validates JWT_SECRET
+import './lib/serialize.js';
+import path from 'node:path';
+import fs from 'node:fs';
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { errorHandler } from './middleware/errorHandler.js';
+import authRoutes from './routes/auth.js';
+import customerRoutes from './routes/customers.js';
+import masterRoutes from './routes/masters.js';
+import customerPartRoutes from './routes/customerParts.js';
+import rfqRoutes from './routes/rfqs.js';
+import rfqSpecRoutes from './routes/rfqSpec.js';
+import rfqVersionRoutes from './routes/rfqVersions.js';
+import specAnalysisRoutes from './routes/specAnalysis.js';
+import referenceRoutes from './routes/reference.js';
+import auditLogRoutes from './routes/auditLog.js';
+import companyRoutes from './routes/company.js';
+import userRoutes from './routes/users.js';
+import roleRoutes from './routes/roles.js';
+import testDrawingRoutes from './routes/testDrawings.js';
+import { reportsRouter, downloadRouter } from './routes/reports.js';
+
+/**
+ * The Express application, without a listening socket — `index.ts` starts it,
+ * and the integration tests drive it directly through supertest.
+ */
+export const app = express();
+
+app.disable('x-powered-by');
+app.use(helmet({ contentSecurityPolicy: false }));
+
+// CORS: open in dev; restrict to WEB_ORIGIN (comma-separated) in production.
+const origins = process.env.WEB_ORIGIN?.split(',').map((s) => s.trim()).filter(Boolean);
+app.use(cors({ exposedHeaders: ['X-Total-Count'], ...(isProd && origins?.length ? { origin: origins } : {}) }));
+
+app.use(express.json({ limit: '35mb' })); // spec PDFs ride in on multipart, but keep headroom
+
+// Rate limiting is skipped under `NODE_ENV=test` so the suite can hammer the API.
+app.use(
+  rateLimit({
+    windowMs: 60_000,
+    limit: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: () => process.env.NODE_ENV === 'test',
+  })
+);
+
+app.get('/health', (_req: Request, res: Response) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+app.use('/auth', authRoutes);
+app.use('/customers', customerRoutes);
+app.use('/customer-parts', customerPartRoutes);
+app.use('/rfqs', rfqSpecRoutes);
+app.use('/rfqs', rfqRoutes);
+app.use('/rfq-versions', rfqVersionRoutes);
+app.use('/rfq-versions', specAnalysisRoutes);
+app.use('/rfq-versions', downloadRouter);
+app.use('/reference', referenceRoutes);
+app.use('/reports', reportsRouter);
+app.use('/audit-log', auditLogRoutes);
+app.use('/company', companyRoutes);
+app.use('/users', userRoutes);
+app.use('/roles', roleRoutes);
+app.use('/test-drawings', testDrawingRoutes);
+app.use('/', masterRoutes);
+
+// In production, serve the built SPA from the same process.
+const API_PREFIXES = [
+  'auth', 'customers', 'customer-parts', 'rfqs', 'rfq-versions', 'reference', 'reports',
+  'audit-log', 'company', 'health', 'material', 'product-types', 'processes', 'machines',
+  'qc-config', 'overhead-config', 'handling-config', 'customer-margin-map', 'users', 'roles', 'test-drawings',
+];
+const webDist = process.env.WEB_DIST || path.resolve(process.cwd(), '../web/dist');
+const serveSpa = isProd && fs.existsSync(webDist);
+if (serveSpa) {
+  app.use(express.static(webDist));
+  console.log(`✓ Serving SPA from ${webDist}`);
+}
+
+app.use((req: Request, res: Response) => {
+  const seg = req.path.split('/')[1] ?? '';
+  if (serveSpa && req.method === 'GET' && !API_PREFIXES.includes(seg) && !req.path.includes('.')) {
+    return res.sendFile(path.join(webDist, 'index.html'));
+  }
+  res.status(404).json({ error: 'Not found' });
+});
+
+app.use(errorHandler);

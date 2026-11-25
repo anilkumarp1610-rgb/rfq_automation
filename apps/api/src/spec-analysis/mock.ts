@@ -1,7 +1,7 @@
 import { SpecExtractResult } from '@rfq/shared';
 
 /**
- * Deterministic stand-in used when no ANTHROPIC_API_KEY is configured, so the
+ * Deterministic stand-in, used ONLY when SPEC_ALLOW_MOCK=true and no ANTHROPIC_API_KEY is configured, so the
  * upload → analyze → review → apply flow stays testable in local dev.
  * Mirrors the two worked drawings from development.plan §6 (P01273549 / P01273550).
  */
@@ -15,6 +15,9 @@ export function mockExtraction(hint?: { partNumber?: string; revision?: string }
   const header = {
     drawingNo: pn || (big ? 'P01273550' : 'P01273549'),
     title: `SHAFT ${od} X ${length} LONG`,
+    itemName: 'SAMPLE SHAFT (mock data)',
+    materialGrade: null,
+    units: 'mm',
     customerName: 'SEPL STD',
     coNo: null,
     revision: hint?.revision ?? 'R00',

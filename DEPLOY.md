@@ -11,8 +11,10 @@ cp apps/api/.env.example apps/api/.env
 ```
 Edit `apps/api/.env`:
 - `DATABASE_URL` — point at the production SQL Server / database / app user
-- `JWT_SECRET` — a long random string
-- `ANTHROPIC_API_KEY` — a real `sk-ant-…` key (or leave the placeholder to run Spec Analysis in mock mode)
+- `JWT_SECRET` — a long random string, **at least 32 characters** (e.g. `openssl rand -hex 48`).
+  With `NODE_ENV=production` the API **refuses to start** if it is missing, still a placeholder, or too
+  short. (In development it only warns and falls back to an insecure dev secret.)
+- `ANTHROPIC_API_KEY` — a real `sk-ant-…` key **with credit on the Anthropic account**. With the placeholder, PDFs with a text layer are read from their own text (free, labelled "read from PDF text"; set `SPEC_EXTRACTOR=text` to force that), and scans/images are refused with a clear message — values are never invented. `SPEC_ALLOW_MOCK=true` re-enables a canned sample for demos only — do not set it in production.
 - `NODE_ENV=production`
 - `WEB_ORIGIN` — the browser origin(s) allowed by CORS, comma-separated (only needed if the SPA is served from a different host)
 
@@ -24,6 +26,18 @@ npm run prisma:migrate      # prisma migrate deploy — applies committed migrat
 npm run prisma:seed         # roles + admin user + sample masters (idempotent)
 ```
 Default admin: `admin@rfq.local` / `Admin@123` — **change the password after first login.**
+
+### Upgrading an existing database
+`npm run prisma:migrate` applies only the migrations that are new. **Back the database up first**
+(`BACKUP DATABASE … WITH COPY_ONLY`). The two newest migrations change data, so know what they do:
+- `version_status_timestamps` adds `rfq_versions.quoted_at` / `decided_at` and back‑fills them from
+  `updated_at` for versions already QUOTED / WON / LOST (so historical dashboard charts do not move).
+- `part_attributes_foreign_keys` adds foreign keys on `rfq_part_attributes`. It fails — safely, rolled
+  back — if any row references a material grade / shape / product type that no longer exists; check with
+  a query for orphans before deploying if you have edited the database by hand.
+
+The application code **requires** these migrations: deploying it before migrating makes RFQ screens fail
+with "invalid column name".
 
 ## 3. Build the web app
 ```bash

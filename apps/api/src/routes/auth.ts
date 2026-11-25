@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcrypt';
-import { loginSchema, registerSchema } from '@rfq/shared';
+import { loginSchema } from '@rfq/shared';
 import { prisma } from '../lib/prisma.js';
 import { generateToken } from '../lib/jwt.js';
 import { validateBody } from '../lib/validate.js';
@@ -17,6 +17,7 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many attempts — try again later' },
+  skip: () => process.env.NODE_ENV === 'test',
 });
 
 router.post('/login', authLimiter, validateBody(loginSchema), async (req: Request, res: Response) => {
@@ -43,28 +44,8 @@ router.post('/login', authLimiter, validateBody(loginSchema), async (req: Reques
   });
 });
 
-router.post('/register', authLimiter, validateBody(registerSchema), async (req: Request, res: Response) => {
-  const { email, name, password } = req.body;
-
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    return res.status(409).json({ error: 'Email already registered' });
-  }
-
-  const passwordHash = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({ data: { email, name, passwordHash } });
-
-  const estimatorRole = await prisma.role.findUnique({ where: { code: 'ESTIMATOR' } });
-  if (estimatorRole) {
-    await prisma.userRole.create({ data: { userId: user.id, roleId: estimatorRole.id } });
-  }
-
-  const token = generateToken({ userId: user.id.toString(), email: user.email, roles: ['ESTIMATOR'] });
-  res.status(201).json({
-    token,
-    user: { id: user.id.toString(), email: user.email, name: user.name, roles: ['ESTIMATOR'] },
-  });
-});
+// NOTE: there is intentionally no public self-registration endpoint. Accounts are created by an
+// administrator on the Security screen (POST /users, ADMIN only).
 
 /** Current user — the client calls this on load to re-hydrate roles from source. */
 router.get(

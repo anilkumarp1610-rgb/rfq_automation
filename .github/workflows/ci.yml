@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "RfqCi_Passw0rd123"
+          MSSQL_PID: Express
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P RfqCi_Passw0rd123 -Q 'SELECT 1' || /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P RfqCi_Passw0rd123 -Q 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 20s
+
+    env:
+      # The integration suite refuses to run against any database whose name does not end in _TEST.
+      TEST_DATABASE_URL: sqlserver://localhost:1433;database=RFQ_TEST;user=sa;password=RfqCi_Passw0rd123;encrypt=true;trustServerCertificate=true
+      DATABASE_URL: sqlserver://localhost:1433;database=RFQ_TEST;user=sa;password=RfqCi_Passw0rd123;encrypt=true;trustServerCertificate=true
+      JWT_SECRET: ci-only-secret-0123456789abcdef0123456789abcdef
+      # Never call the paid API from CI: a placeholder key selects the deterministic mock extractor.
+      ANTHROPIC_API_KEY: sk-ant-
+      SPEC_ALLOW_MOCK: "true" # tests use the canned sample extractor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate
+
+      - name: Typecheck API
+        run: npm run typecheck --workspace=@rfq/api
+
+      - name: Typecheck + build web
+        run: npm run build --workspace=@rfq/web
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Create the test database
+        run: >-
+          echo "IF DB_ID('RFQ_TEST') IS NULL CREATE DATABASE [RFQ_TEST];"
+          | npx prisma db execute --stdin
+          --url "sqlserver://localhost:1433;database=master;user=sa;password=RfqCi_Passw0rd123;encrypt=true;trustServerCertificate=true"
+
+      - name: Apply migrations
+        run: npm run prisma:migrate
+
+      - name: Seed (roles, admin, sample masters)
+        run: npm run prisma:seed
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      # Real Chrome (preinstalled on ubuntu runners) driving the real web app against the real API on RFQ_TEST.
+      - name: Browser tests (Playwright)
+        run: npm run test:e2e
+
+      - name: Upload browser-test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 7

@@ -25,12 +25,12 @@ const get = (p: string) => apiClient.get(p).then((r) => r.data)
 
 const HEADER_FIELDS: [string, string][] = [
   ['drawingNo', 'Drawing no.'],
-  ['title', 'Title'],
+  ['title', 'Item name / title'],
   ['customerName', 'Customer'],
   ['revision', 'Revision'],
   ['sheetSize', 'Sheet'],
   ['scale', 'Scale'],
-  ['materialNote', 'Material note'],
+  ['materialNote', 'Material grade / note'],
   ['productType', 'Product type'],
   ['sectionView', 'Section view'],
 ]
@@ -84,6 +84,7 @@ export default function SpecAnalysis({
   const [estNet, setEstNet] = useState('')
   const [flags, setFlags] = useState<string[]>([])
   const [mock, setMock] = useState(false)
+  const [textRead, setTextRead] = useState(false)
 
   useEffect(() => {
     if (!spec) return
@@ -94,6 +95,7 @@ export default function SpecAnalysis({
       const raw = spec.rawExtract ? JSON.parse(spec.rawExtract) : null
       setFlags(raw?.flags ?? [])
       setMock(!!raw?._mock)
+      setTextRead(raw?._source === 'text')
     } catch {
       setFlags([])
     }
@@ -111,11 +113,11 @@ export default function SpecAnalysis({
       fd.append('file', file)
       await apiClient.post(`/rfq-versions/${versionId}/attachments`, fd)
       return apiClient
-        .post(`/rfq-versions/${versionId}/analyze-spec`, {})
+        .post(`/rfq-versions/${versionId}/analyze-spec`, {}, { timeout: 300_000 })
         .then((r) => r.data)
     },
     onSuccess: (data: any) => {
-      toast.success(data.mock ? 'Analyzed (mock — no API key)' : 'Drawing analyzed')
+      toast.success(data.mock ? 'Analyzed (SAMPLE data — not read from the drawing)' : data.source === 'text' ? 'Read from the PDF text (no AI) — please check the values' : 'Drawing analyzed')
       qc.invalidateQueries({ queryKey: ['spec-attachments', versionId] })
       invalidate()
     },
@@ -123,9 +125,9 @@ export default function SpecAnalysis({
   })
 
   const reanalyze = useMutation({
-    mutationFn: () => apiClient.post(`/rfq-versions/${versionId}/analyze-spec`, {}).then((r) => r.data),
+    mutationFn: () => apiClient.post(`/rfq-versions/${versionId}/analyze-spec`, {}, { timeout: 300_000 }).then((r) => r.data),
     onSuccess: (data: any) => {
-      toast.success(data.mock ? 'Re-analyzed (mock)' : 'Re-analyzed')
+      toast.success(data.mock ? 'Re-analyzed (SAMPLE data)' : data.source === 'text' ? 'Re-read from the PDF text (no AI)' : 'Re-analyzed')
       invalidate()
     },
     onError: (e: any) => {
@@ -244,7 +246,8 @@ export default function SpecAnalysis({
           ) : (
             <Badge variant="warning">Needs review</Badge>
           )}
-          {mock && <Badge variant="secondary">mock</Badge>}
+          {mock && <Badge variant="warning">sample data</Badge>}
+          {!mock && textRead && <Badge variant="secondary">read from PDF text</Badge>}
           {spec.overallConfidence != null && (
             <span className="text-xs font-normal text-muted-foreground">
               conf {Number(spec.overallConfidence).toFixed(2)}

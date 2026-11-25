@@ -12,12 +12,18 @@ const nzNum = z.coerce.number().nullish();
 export const specHeaderExtract = z.object({
   drawingNo: str,
   title: str,
+  /** the part's name as printed in the title block ("BRUSH HOLDER") — becomes the part name */
+  itemName: str,
   customerName: str,
   coNo: str,
   revision: str,
   sheetSize: str,
   scale: str,
   materialNote: str,
+  /** the material grade as printed ("304L SS", "EN8", "SS316") — used to pick the grade */
+  materialGrade: str,
+  /** unit system the drawing is dimensioned in; every *Mm value is already converted to mm */
+  units: str,
   designedBy: str,
   detailedBy: str,
   checkedBy: str,

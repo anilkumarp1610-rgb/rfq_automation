@@ -151,6 +151,8 @@ export const rfqFromSpecSchema = z.object({
   extract: specExtractResult,
   /** whether that extraction was the deterministic mock (no API key) */
   mock: z.coerce.boolean().default(false),
+  /** where the extraction came from — the AI, the PDF's own text layer, or the canned sample */
+  source: z.enum(['ai', 'text', 'sample']).optional(),
   partNumber: z.string().trim().min(1, 'Part number is required').max(120),
   partName: z.string().trim().min(1, 'Part name is required').max(200),
   revision: z.string().trim().max(20).default('R00'),

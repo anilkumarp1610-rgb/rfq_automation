@@ -55,7 +55,7 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
     where: { id: versionId },
     include: {
       costSummary: true,
-      partAttributes: true,
+      partAttributes: { include: { materialCategory: true, materialShape: true } },
       materials: { include: { materialSizeConfig: { include: { materialCategory: true, materialShape: true } } } },
       processes: { include: { process: true }, orderBy: { sequence: 'asc' } },
       rfq: { include: { customerPart: { include: { customer: true, productType: true } } } },
@@ -77,14 +77,11 @@ export async function costSheetViewModel(versionId: bigint): Promise<CostSheetVM
   const plus30 = new Date(now.getTime() + 30 * 864e5);
   const matLine = v!.materials[0];
 
-  let matCat: { gradeCode: string } | null = matLine?.materialSizeConfig.materialCategory ?? null;
-  let matShape: { name: string } | null = matLine?.materialSizeConfig.materialShape ?? null;
-  if (!matCat && v!.partAttributes?.materialCategoryId) {
-    matCat = await prisma.materialCategory.findUnique({ where: { id: v!.partAttributes.materialCategoryId } });
-  }
-  if (!matShape && v!.partAttributes?.materialShapeId) {
-    matShape = await prisma.materialShape.findUnique({ where: { id: v!.partAttributes.materialShapeId } });
-  }
+  // the costed material line wins; otherwise what was chosen on the part attributes
+  const matCat: { gradeCode: string } | null =
+    matLine?.materialSizeConfig.materialCategory ?? v!.partAttributes?.materialCategory ?? null;
+  const matShape: { name: string } | null =
+    matLine?.materialSizeConfig.materialShape ?? v!.partAttributes?.materialShape ?? null;
 
   const boughtOut = v!.partAttributes?.sourcingType === 'BOUGHT_OUT';
 

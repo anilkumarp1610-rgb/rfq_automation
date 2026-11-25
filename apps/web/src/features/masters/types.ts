@@ -56,6 +56,12 @@ export interface MasterConfig {
   hideDelete?: boolean
   /** allow the ESTIMATOR role to create/edit, not just ADMIN/MANAGER */
   editableByEstimator?: boolean
+  /**
+   * Page / sort / count on the server instead of in the browser — for lists that grow without
+   * bound. Maps a field name to the API's `sort` key; fields not listed are not sortable.
+   * Omit for small masters, which stay fully client-side.
+   */
+  serverPaging?: { sortKeys: Record<string, string> }
 }
 
 /** One navigation-pane entry: a functional area with one or more tabbed sections. */

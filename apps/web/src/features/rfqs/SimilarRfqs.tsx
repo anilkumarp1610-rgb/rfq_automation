@@ -48,6 +48,7 @@ export default function SimilarRfqs({
     onSuccess: () => {
       toast.success('Reference updated')
       qc.invalidateQueries({ queryKey: ['similar'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] }) // marking won / lost changes the win rate
       onChanged()
     },
     onError: (e) => toast.error(apiError(e)),
